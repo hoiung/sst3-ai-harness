@@ -67,6 +67,7 @@ KNOWN_REPOS: List[str] = [
     'ebay-ops',
     'job-hunter',
     'brainstorm',
+    'blog-priv',
 ]
 
 

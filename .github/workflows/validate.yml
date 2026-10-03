@@ -36,13 +36,18 @@ jobs:
         echo "Validating JSON files..."
         find . -name "*.json" -print0 | while IFS= read -r -d '' file; do
           echo "Checking $file"
-          node -e "JSON.parse(require('fs').readFileSync('$file', 'utf8'))" && echo "  ✓ Valid" || exit 1
+          # The path reaches node as an argument, never pasted into the JS source: a file named
+          # `a',process.exit(0),'.json` printed "Valid" and ran code in the runner (dotfiles#577).
+          node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$file" && echo "  ✓ Valid" || exit 1
         done
 
     - name: Validate YAML files
       run: |
         echo "Validating YAML files..."
-        python3 -c "import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]" $(find . -name "*.yml" -o -name "*.yaml") && echo "✓ All YAML files are valid" || exit 1
+        # NUL-delimited: an unquoted $(find) split a spaced name into words (dotfiles#577).
+        find . \( -name "*.yml" -o -name "*.yaml" \) -print0 \
+          | xargs -0 python3 -c "import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]" \
+          && echo "✓ All YAML files are valid" || exit 1
 
     - name: Check JavaScript syntax
       run: |

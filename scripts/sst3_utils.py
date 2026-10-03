@@ -89,8 +89,8 @@ def collect_source_files(
     """Collect source files matching extensions, applying ignore filters.
 
     Consolidates the duplicate `for ext in [...]: rglob(f'*{ext}')` + filter
-    pattern from check-debug-code.py, check-fallbacks.py, check-hardcoded-params.py,
-    and check-discoverability.py (Phase 7 dedup).
+    pattern from check-debug-code.py, check-fallbacks.py and check-hardcoded-params.py
+    (Phase 7 dedup).
 
     Args:
         base_path: directory to scan recursively

@@ -14,7 +14,6 @@ Automation scripts for SST3 workflow validation and enforcement.
 | sst3_mirror_utils.py | Shared module: 7 transforms + manifest loader + schema validator + drift comparator. Byte-identical across canonical and 3 mirrors. Issue #418. |
 | [check-crossrepo-paths.py](check-crossrepo-paths.py) | Pre-commit hook for cross-repo path validation |
 | check-retrospective-location.py _(operator-only — not shipped in this mirror)_ | Validates retrospective file locations (operator-side) |
-| check-discoverability.py | Validates CLAUDE.md → SST3 chain (4 hops max). Pre-commit + Verification Loop. Exit 0 = clean, 1 = chain broken. |
 | check-issue-body-vs-comments.py | Detects scope content placed in issue comments instead of issue body. Required by user-review-checklist Section 5. Exit 0 = clean, 1 = violations. |
 | check-issue-checkboxes.py | Parses issue body+comments for checkbox state. Used by Verification Loop and MCP checkbox tools. |
 | quality-audit.py | Runs `quality-check.py` against all SST3 markdown files. Pre-merge validation gate. |

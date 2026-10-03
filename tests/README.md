@@ -5,7 +5,7 @@ Comprehensive regression tests for SST3 workflow system to prevent quality degra
 ## What
 
 This test suite validates SST3 quality across 8 dimensions:
-1. **Discoverability** - All files reachable from CLAUDE.md
+1. **Discoverability** - retired with `check-discoverability.py` (dotfiles#577); a reviewer checks it at user review
 2. **Stage Execution** - All 5 stages have complete checklists
 3. **Subagent Quality** - Launch instructions are clear
 4. **Monitoring** - Self-monitoring systems work
@@ -24,7 +24,7 @@ cd /path/to/your/dotfiles
 python SST3/tests/regression-suite.py
 
 # Run specific category
-python SST3/tests/regression-suite.py --category discoverability
+python SST3/tests/regression-suite.py --category communication
 
 # Verbose output
 python SST3/tests/regression-suite.py --verbose
@@ -50,7 +50,6 @@ SST3/tests/
 ├── test_template_quality.py               # Template quality tests (NEW)
 ├── test_edge_cases.py                     # Edge case tests (NEW)
 ├── test_framework_validation.py           # Framework validation tests (NEW)
-├── test_discoverability.py                # CLAUDE.md → files tests
 ├── test_stage_execution.py                # All 5 stages validation
 ├── test_subagent_quality.py               # Subagent instructions
 ├── test_monitoring.py                     # Self-monitoring validation
@@ -68,11 +67,8 @@ Test Results (written to SST3-metrics/test-results/):
 
 ## Test Categories
 
-### 1. Discoverability (15% weight)
-- Validates all SST3 files discoverable from CLAUDE.md
-- Tests discovery chain: CLAUDE.md → WORKFLOW.md → stages → features
-- Ensures no broken references
-- Cross-repo path validation
+### 1. Discoverability (retired)
+- Removed with `check-discoverability.py` (dotfiles#577); the suite no longer runs this category
 
 ### 2. Stage Execution (20% weight)
 - Validates all 5 stages have complete checklists

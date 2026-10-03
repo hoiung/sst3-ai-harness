@@ -8,7 +8,7 @@ quality score, and compares against baseline.
 Usage:
     python regression-suite.py              # Run all tests
     python regression-suite.py --verbose     # Verbose output
-    python regression-suite.py --category discoverability  # Run specific category
+    python regression-suite.py --category communication  # Run specific category
     python regression-suite.py --baseline    # Compare against baseline
 
 Exit Codes:
@@ -23,7 +23,6 @@ from pathlib import Path
 from datetime import datetime
 
 # Import test modules
-from test_discoverability import DiscoverabilityTests
 # test_stage_execution and test_subagent_quality never created — removed (#399)
 from test_monitoring import MonitoringTests
 from test_recovery import RecoveryTests
@@ -64,7 +63,6 @@ class RegressionSuite:
             'communication': 5,           # 9 tests (5 original + 4 new) - communication protocols
 
             # Supporting categories - 12% weight
-            'discoverability': 3,
             'quality_validation': 2,
             'monitoring': 2,
             'recovery': 2,
@@ -104,7 +102,6 @@ class RegressionSuite:
             'template_quality': TemplateQualityTests,
             'communication': CommunicationTests,
             # Supporting categories
-            'discoverability': DiscoverabilityTests,
             'quality_validation': QualityValidationTests,
             'monitoring': MonitoringTests,
             'recovery': RecoveryTests,
@@ -362,7 +359,7 @@ def main():
 Examples:
   python regression-suite.py                 # Run all tests
   python regression-suite.py --verbose       # Verbose output
-  python regression-suite.py --category discoverability  # Specific category
+  python regression-suite.py --category communication  # Specific category
   python regression-suite.py --baseline      # Compare against baseline
         """
     )

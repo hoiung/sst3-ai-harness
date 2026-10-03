@@ -30,7 +30,7 @@ repos:
       # Scripts for these hooks are published in this mirror for reference but not wired here.
       - id: no-temp-folder
         name: Prevent temp/ and tmp/ folder commits
-        entry: bash -c 'TEMP_FILES=$(git diff --cached --name-only | grep -E "^temp/|/temp/|^tmp/|/tmp/"); if [ -n "$TEMP_FILES" ]; then echo "ERROR - temp/tmp folders not allowed in repos."; echo "Use C:/temp/ instead and delete the folder."; echo ""; echo "Blocked files -"; echo "$TEMP_FILES"; exit 1; fi'
+        entry: bash -c 'TEMP_FILES=$(git diff --cached --name-only -z | tr "\0" "\n" | grep -E "^temp/|/temp/|^tmp/|/tmp/"); if [ -n "$TEMP_FILES" ]; then echo "ERROR - temp/tmp folders not allowed in repos."; echo "Use C:/temp/ instead and delete the folder."; echo ""; echo "Blocked files -"; echo "$TEMP_FILES"; exit 1; fi'
         language: system
         pass_filenames: false
         always_run: true
@@ -103,16 +103,23 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-added-large-files
-        args: [--maxkb=1000]
+        args: [--maxkb=1000, "--"]
       - id: check-case-conflict
+        args: ["--"]
       - id: check-merge-conflict
+        args: ["--"]
       - id: check-json
+        args: ["--"]
       - id: check-toml
+        args: ["--"]
       - id: check-yaml
+        args: ["--"]
       - id: end-of-file-fixer
+        args: ["--"]
       - id: mixed-line-ending
-        args: [--fix=lf]
+        args: [--fix=lf, "--"]
       - id: trailing-whitespace
+        args: ["--"]
 
 # Configuration
 default_language_version:

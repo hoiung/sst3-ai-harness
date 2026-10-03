@@ -24,15 +24,15 @@
 - **AP #12 No Observability**: every component needs structured logs, metrics, and audit trails AT WRITE TIME. Not after the first incident.
 - **AP #13 "Proceed" ≠ "Bypass Process"**: when the user says okay / proceed / yes / go ahead, that means **proceed using the full standard process** — not skip the sweeps, gates, Ralph reviews, or guardrails. User authorisation never bypasses workflow.
 - **AP #17 Keep Going Until Done**: do NOT stop mid-work to ask permission, wait for user confirmation, or "check in". Phase checkpoints post a comment to the Issue and CONTINUE. Stop ONLY for: (a) context approaching ~50% remaining (~500K of 1M / ~100K of 200K) — on long/multi-phase work the agent AUTO-runs `/handover` + compact + CONTINUE (does not wait for the operator); never operate below 50% remaining; near-completion exemption: ~2-3 turns from done at ~51% → finish, (b) irreversible destructive action needing user consent (force-push, rm -rf, DROP TABLE, branch deletion), (c) genuinely stuck after investigation (not a first-response-to-friction reflex), (d) task complete. Compaction is a CONTINUATION mechanism, not premature stopping.
-- **AP #16 Monitor, Don't Fire-and-Forget**: every script / command / subprocess / test / deployment / commit / push you launch must be verified end-to-end (tail logs, check exit code, verify output, confirm side effects). "Started" is not "done". For `run_in_background`, poll BashOutput. Be the user's eyes and ears, not just their executioner. If you cannot answer "what happened?" with specifics, you fired and forgot — go check NOW.
+- **AP #16 Monitor, Don't Fire-and-Forget**: every script / command / subprocess / test / deployment / commit / push you launch must be verified end-to-end (tail logs, check exit code, verify output, confirm side effects). "Started" is not "done". For `run_in_background`, use Monitor or read its output file. Be the user's eyes and ears, not just their executioner. If you cannot answer "what happened?" with specifics, you fired and forgot — go check NOW.
 - **AP #18 Sample Invocation Validates Workflow**: for any change touching pipeline / data-processing / orchestration / CLI-wiring / cross-module function-arg propagation — run an actual end-to-end sample invocation (real CLI, real DB, small liquid basket 8 items) BEFORE closing. Unit + smoke tests are necessary but NOT sufficient. Mocks that accept `**kwargs` silently discard params and do NOT prove propagation — assert `call_args.kwargs[...]` explicitly. Stage 4 Verification Loop mandatory gate. See STANDARDS.md "Testing Priority — Workflow Validation Gate".
 
 **STOP if**: No GitHub Issue exists. Create Issue using `templates/issue-template.md`.
 
 ### Solo Workflow Overview
 
-**Context Window**: 1M tokens (Opus 4.6/Sonnet 4.6), 200K (Haiku 4.5)
-**Content Budget**: ~42K tokens (STANDARDS.md + CLAUDE.md + Issue loaded at session start)
+**Context**: read the injected `SST3 CONTEXT GAUGE` line; `/clear` between unrelated tasks
+**Content Budget**: `/Leader` stages load per-stage subsets via `load-stage-rules.sh`
 **Handover at**: ~50% remaining (~500K of 1M / ~100K of 200K) — on long/multi-phase work the agent AUTO-runs `/handover` + compact + CONTINUE; never operate below 50% remaining (near-completion exemption: ~2-3 turns from done at ~51% → finish).
 **Issue Header**: `## Solo Assignment (SST3 Automated)`
 **Branch**: `solo/issue-{number}-{description}` (commit per file, no PR)
@@ -77,9 +77,9 @@ See: `reference/research-reference-guide.md` for complete guide
 
 | Tier | Model | Purpose | Invocation |
 |------|-------|---------|------------|
-| 1 | `haiku` (MANDATORY) | Surface checks | `Task(model=haiku, prompt="Review per SST3/ralph/haiku-review.md...")` |
-| 2 | `sonnet` (MANDATORY) | Logic checks | `Task(model=sonnet, prompt="Review per SST3/ralph/sonnet-review.md...")` |
-| 3 | `opus` (MANDATORY) | Deep analysis | `Task(model=opus, prompt="Review per SST3/ralph/opus-review.md...")` |
+| 1 | `haiku` (MANDATORY) | Surface checks | `Agent(model=haiku, run_in_background=false, prompt="Review per SST3/ralph/haiku-review.md...")` |
+| 2 | `sonnet` (MANDATORY) | Logic checks | `Agent(model=sonnet, run_in_background=false, prompt="Review per SST3/ralph/sonnet-review.md...")` |
+| 3 | `opus` (MANDATORY) | Deep analysis | `Agent(model=opus, run_in_background=false, prompt="Review per SST3/ralph/opus-review.md...")` |
 
 **On FAIL any tier**: Main agent fixes → Restart from Tier 1 (Haiku), up to 3 restarts. Restart 4: NOT taken — escalate to a class-sweep Workflow, then resume Ralph with the count reset to zero for exactly ONE further loop; if that loop does not PASS, STOP and report the outstanding findings + classes to the operator (terminal state — never a silent abandon).
 **On PASS all 3**: Merge to main immediately (protects work), then user review

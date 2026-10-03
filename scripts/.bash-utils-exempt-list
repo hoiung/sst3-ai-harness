@@ -8,5 +8,4 @@ sst3-code-update.sh       # no-op contract-preservation shim — no engine deps
 sst3-sync-doc-to-code.sh  # bash + jq + python3 only — system PATH
 sst3-sync-related-code.sh # bash + jq + git only — system PATH
 sst3-sync-tool-eviction.sh # rg only — /usr/bin/rg, system PATH
-sst3-sync-url-liveness.sh # delegates to sst3-doc-links.sh (which sources bash-utils)
 sst3-self-test.sh         # meta-validator — self-bootstraps PATH inline at L22-37 (intentional duplication; works even if bash-utils is broken)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sst3-check.sh — Layer-2 orchestrator composing the wrapper-lane (A+B+C).
+# sst3-check.sh — Layer-2 orchestrator composing the wrapper-lane (code, sec, dep, doc, sync).
 #
 # Usage:   sst3-check.sh [--code | --sec | --dep | --doc | --sync | --all] [--quiet]
 # Default: --all
@@ -22,7 +22,8 @@
 #          script has never returned — engine-missing is an inner wrapper's exit
 #          code, escalated here to 2. Corrected in the same pass as the fourth
 #          could-not-look route (#565 Ralph round 10 T3).
-# Engines: composes sst3-code-* (Phase A) + sst3-doc-* (Phase B) + sst3-sync-* (Phase C).
+# Engines: composes sst3-code-* (Phase A) + sst3-doc-* (Phase B) + sst3-sync-* (Phase C)
+#          + sst3-sec-* / sst3-dep-* (Phase 8a/8b); the run_or_skip lines below are the list.
 #
 # #445 R4 Bug B fix: pre-fix, the FINDINGS counter was incremented inside a
 # pipeline subshell at the old emit() function — parent shell always saw 0.
@@ -100,12 +101,24 @@ TARGET_REQUIRED_SKIPPED=(
     sst3-dep-usage
     sst3-dep-blast-radius
     sst3-sync-doc-to-code
-    sst3-sync-url-liveness
 )
 
 # Per-phase timeout — prevents one slow inner wrapper from starving the rest
 # under an outer wallclock cap.
 PHASE_TIMEOUT="${SST3_CHECK_PHASE_TIMEOUT:-90}"
+# Whole seconds only: `timeout` read a value such as `--help` as its own option, printed its
+# help and ran no phase, so `--strict` exited 0 over a finding (#577 Ralph r9b Sonnet).
+if [[ ! "$PHASE_TIMEOUT" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: SST3_CHECK_PHASE_TIMEOUT must be a whole number of seconds, not '$PHASE_TIMEOUT'" >&2
+    exit 64
+fi
+# mktemp builds the per-phase capture paths from TMPDIR, and they reach rm and head as trusted
+# operands: `TMPDIR=-x` made `rm` read one as an option and `set -e` stop the run after its
+# first phase with exit 1, the findings code (#577 Ralph r9c).
+if [[ -n "${TMPDIR:-}" && "$TMPDIR" != /* ]]; then
+    echo "ERROR: TMPDIR must be an absolute path, not '$TMPDIR'" >&2
+    exit 64
+fi
 
 # EXIT trap: emit orchestrator-complete sentinel UNCONDITIONALLY. Guarantees
 # downstream consumers can detect "orchestrator finished" via a terminating
@@ -151,14 +164,20 @@ run_or_skip() {
 
     local start=$SECONDS
     local tmp stderr_tmp
-    tmp=$(mktemp)
-    stderr_tmp=$(mktemp)
+    # A temp file that cannot be made stopped the run under `set -e` with exit 1, the findings
+    # code, over no phase at all. It is a could-not-look (#577 Ralph r9 Opus).
+    tmp="" stderr_tmp=""
+    if ! tmp=$(mktemp) || ! stderr_tmp=$(mktemp); then
+        [[ -n "$tmp" ]] && rm -f -- "$tmp"
+        echo "[sst3-check] could not make a temp file under '${TMPDIR:-/tmp}'; this run did NOT confirm the target is clean" >&2
+        exit 2
+    fi
     set +e
     # #447 Phase 2: capture inner stderr to per-phase tmp file instead of
     # /dev/null. Engine-broken wrappers wrote diagnostics to stderr that the
     # orchestrator was throwing away; now we surface them in NDJSON so consumers
     # can debug without re-running.
-    timeout --preserve-status "$PHASE_TIMEOUT" bash "$SCRIPT" "$@" >"$tmp" 2>"$stderr_tmp"
+    timeout --preserve-status -- "$PHASE_TIMEOUT" bash -- "$SCRIPT" "$@" >"$tmp" 2>"$stderr_tmp"
     local rc=$?
     set -e
 
@@ -283,8 +302,6 @@ if [[ "$MODE" == "all" || "$MODE" == "sync" ]]; then
     run_or_skip sync-tool-eviction "$WRAPPER_DIR/sst3-sync-tool-eviction.sh" "$EVICTION_TOKEN"
     # NOTE: sst3-sync-doc-to-code.sh requires <doc> + <lang> args — not composable
     # without a default doc selection. Invoke directly when needed.
-    # NOTE: sst3-sync-url-liveness.sh is an alias to sst3-doc-links.sh — already
-    # invoked above in the doc lane to avoid duplicate execution.
 fi
 
 if [[ "$QUIET" -eq 0 ]]; then

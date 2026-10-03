@@ -23,11 +23,11 @@ If ANY dimension fails: SKIP change.
 - Logical structure (easy to follow)
 - Appropriate detail level (not too verbose/terse)
 
-**PASS Example: Issue #128 Section 3.5.1**
+**PASS Example: a gate step that says what fails and stops**
 ```bash
-# Check for BLOCKING failures
-if grep -q "BLOCKING" discoverability_output.txt; then
-    echo "FAIL: BLOCKING failure detected"
+# Fail when any canon citation no longer points at the line it names
+if ! python3 $SST3/check-sst3-citations.py; then
+    echo "FAIL: a canon citation moved; re-anchor it before continuing"
     exit 1
 fi
 ```
@@ -92,21 +92,22 @@ fi
 - No false positives/negatives
 - Clear pass/fail criteria (not subjective)
 
-**PASS Example: Stage 4 BLOCKING Detection**
+**PASS Example: Stage 4 pre-Ralph vacuity gate**
 ```bash
 # Automated, no manual interpretation
-exit_code=$(python check-discoverability.py)
-if [ $exit_code -eq 1 ] && grep -q "BLOCKING" output.txt; then
-    echo "FAIL: Cannot merge - BLOCKING failure"
+bash "$SST3/sst3-test-vacuity.sh" "${changed_tests[@]}"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    echo "FAIL: vacuity gate exit $rc (1 = findings, 2 = could not look)"
     exit 1
 fi
 ```
-- Quantitative: exit code 0=pass, 1=fail
-- Automated keyword parsing
+- Quantitative: exit code 0=pass, 1=findings, 2=could not look
+- Could-not-look blocks exactly like a finding
 - No manual override allowed
 
 **FAIL Example: Issue #124 Severity Assessment**
-- check-discoverability.py output: "BLOCKING: Cannot merge PR"
+- the discoverability script's output (script retired in #577): "BLOCKING: Cannot merge PR"
 - Stage 4 assessment: "ACCEPTABLE (95%, pre-existing gaps)"
 - Manual override of BLOCKING → incorrect result
 - No quantitative criteria for "acceptable"

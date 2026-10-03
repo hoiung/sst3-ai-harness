@@ -5,7 +5,7 @@
 > there; Append-vs-Extend). dotfiles#516 AC 4.1.
 
 <!-- stages: 4 -->
-## The three recurring instances
+## The four recurring instances
 
 <!-- stages: 4 -->
 ### 1. Propagation-managed "duplicate" files
@@ -28,6 +28,12 @@ Before reversing a previously-documented deferral ("we deferred X because Y"), r
 comment URL and confirm it still applies. Memory of "we should do X now" is a hypothesis; the recorded
 rationale is the source of intent. If the rationale no longer holds, say so explicitly with evidence —
 do not silently reverse.
+
+<!-- stages: 4 -->
+### 4. Agent-drafted legal or policy pages
+Source of intent for a legal or policy page (privacy, retention, terms): an agent-drafted page is a draft,
+never the operator's policy, until the operator confirms it. Before quoting its promises as policy, or
+building a feature that enforces them, find that confirmation.
 
 <!-- stages: 4 -->
 ## State-machine / persistence-schema companion rule (STANDARDS.md "Code Quality")

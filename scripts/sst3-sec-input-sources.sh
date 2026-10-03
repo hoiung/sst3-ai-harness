@@ -56,10 +56,11 @@ if [[ -n "$PATHS_FROM" ]]; then
         echo "ERROR: --paths-from file not readable: $PATHS_FROM" >&2
         exit 64
     fi
-    while IFS= read -r p; do
-        [[ -n "$p" ]] && ALLOWED_PATHS+=("$p")
-    done < <(read_paths_from "$PATHS_FROM")
+    load_paths_from "$PATHS_FROM" ALLOWED_PATHS
 fi
+# The engine scans the listed files themselves (sst3-bash-utils.sh paths_from_scan_targets).
+declare -a SCAN_TARGETS=()
+paths_from_scan_targets ALLOWED_PATHS SCAN_TARGETS
 path_allowed() {
     local file="$1"
     [[ ${#ALLOWED_PATHS[@]} -eq 0 ]] && return 0
@@ -70,11 +71,11 @@ path_allowed() {
 }
 
 emit_record() {
-    local file="$1" line="$2" source_kind="$3" snippet="$4"
+    local file="$1" line="$2" source_kind="$3" snippet="$4" end_line="${5:-$2}"
     if path_allowed "$file"; then
         snippet="${snippet:0:60}"
-        jq -nc --arg f "$file" --argjson l "$line" --arg sk "$source_kind" --arg sn "$snippet" \
-            '{file:$f, line:$l, source_kind:$sk, snippet:$sn}'
+        jq -nc --arg f "$file" --argjson l "$line" --argjson e "$end_line" --arg sk "$source_kind" --arg sn "$snippet" \
+            '{file:$f, line:$l, end_line:$e, source_kind:$sk, snippet:$sn}'
         SST3_EMITTED_COUNT=$((SST3_EMITTED_COUNT + 1))
     fi
 }
@@ -94,17 +95,19 @@ PATTERNS=(
 
 AG_OUT=$(mktemp)
 for spec in "${PATTERNS[@]}"; do
+    [[ ${#SCAN_TARGETS[@]} -gt 0 ]] || break  # a list naming no existing file: scan nothing
     IFS='|' read -r kind pattern <<< "$spec"
     AG_RC=0
-    ast-grep run --pattern "$pattern" --lang python --json=stream > "$AG_OUT" 2>/dev/null || AG_RC=$?
+    run_over_targets "$AG_OUT" SCAN_TARGETS ast-grep run --pattern "$pattern" --lang python --json=stream || AG_RC=$?
     ast_grep_check_rc "sst3-sec-input-sources" "$AG_RC" || { rm -f "$AG_OUT"; exit 0; }
     while IFS= read -r record; do
         [[ -z "$record" ]] && continue
         file=$(jq -r '.file // ""' <<< "$record")
         line=$(jq -r '(.range.start.line + 1) // 0' <<< "$record")  # #547 AC 7.1: 1-indexed
+        end_line=$(jq -r '(.range.end.line + 1) // 0' <<< "$record")  # a call can span lines (#577)
         text=$(jq -r '.text // ""' <<< "$record")
         [[ -z "$file" ]] && continue
-        emit_record "$file" "$line" "$kind" "$text"
+        emit_record "$file" "$line" "$kind" "$text" "$end_line"
     done < "$AG_OUT"
 done
 rm -f "$AG_OUT"

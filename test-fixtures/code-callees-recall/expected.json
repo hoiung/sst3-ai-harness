@@ -1,0 +1,12 @@
+{
+  "fixture": "code-callees-recall",
+  "issue": 577,
+  "scope": "AC 4.7: sst3-code-callees.sh recall. A named callee of target() is returned on its line, a named non-callee (unrelated_function, called only in other()) is not, and Class.method scoping returns only that method's calls.",
+  "driver": "run.sh",
+  "exit_code": 0,
+  "stdout_must_contain": [
+    "PASS: named_callee_present",
+    "PASS: named_non_callee_absent",
+    "PASS: method_scope"
+  ]
+}

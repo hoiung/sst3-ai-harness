@@ -31,6 +31,7 @@ endpoint (a probe must not mutate the system it is probing):
 - `ls <path>` / `test -f <path>` before asserting a file "doesn't exist".
 - Synonym-swept `grep -rn` (multiple spellings) before "no match" — a single narrow pattern proves only
   that spelling is absent (cross-ref AP #14e concept-based grep).
+- <!-- c4:T01 --> The same concept sweep covers every absence or completeness claim.
 - For "tool not installed": run the tool's `--version` (exit 127 = genuinely missing on disk) rather
   than assuming from a stale PATH or memory.
 
@@ -39,7 +40,7 @@ endpoint (a probe must not mutate the system it is probing):
 - Read the **live ledger/log/DB row** that the change was supposed to write — not the diff. "Code
   written" is not "problem solved"; the Stage 5 production-state L1 angle reads live state post-deploy.
 - Split a `git pull` from a `systemctl restart` into separate steps — an interrupt cannot undo a
-  `SIGTERM` once dispatched, so verify the pull landed before restarting.
+  `SIGTERM` once dispatched, so verify the pull landed before restarting. <!-- c4:T19 --> During any external-side-effect step, the agent checks the live platform after any interrupt (e.g. a killed tool call) before retrying or declaring the step undone.
 - Pre-flight the repo's CI before dispatching the Stage-5 swarm: `gh run list --limit 5 --json conclusion`
   — surface any FAILURE first (a red pipeline invalidates "the change is green").
 
@@ -57,30 +58,25 @@ are NEVER load-bearing for a row-existence or row-count assertion. Use an exact 
   universe was intact. dotfiles#528 AC 6.2.)
 
 <!-- stages: 5 -->
-### DB-timestamp write frame — tz / date-bucketing changes (#555 Phase 3)
+### DB-timestamp write frame (tz / bucketing)
 - Before asserting how a timestamp column buckets, probe the WRITE frame, not just the read side:
-  the column type (`\d <table>` — `timestamp` vs `timestamptz`), the server frame (`SHOW timezone;`),
-  and the writer path (`grep -rn '<column>'` across the writer modules — `now()` vs `utcnow()` vs a
-  client-supplied value). A bucketing claim built from the read side alone inherits whichever frame
-  the writer actually used.
+  column type (`\d <table>` — `timestamp` vs `timestamptz`), server frame (`SHOW timezone;`) and
+  writer path (`grep -rn '<column>'` across writer modules — `now()` vs `utcnow()` vs client-supplied).
 
 <!-- stages: 5 -->
-### GHA / service recovery (#555 Phase 3)
-- Author recovery probes from the live unit, never memory: `systemctl show -p ExecStart <unit>`
-  shows what actually runs. VERIFY recovery by re-running a real runner job — a green
-  `systemctl status` proves the daemon, not the pipeline.
+### GHA / service recovery
+- Author recovery probes from the live unit (`systemctl show -p ExecStart <unit>`), never memory;
+  VERIFY by re-running a real runner job — a green `systemctl status` proves only the daemon.
 
 <!-- stages: 5 -->
-### Assembled SQL — clause concatenated onto a constant (#555 Phase 3)
-- When a SQL clause is concatenated onto a constant/base query, run a live `EXPLAIN` of the
-  ASSEMBLED statement — a window-fn/keyword grep of the fragments proves the fragments, not the
-  plan the database actually executes.
+### Assembled SQL
+- For a clause concatenated onto a constant/base query, run a live `EXPLAIN` of the
+  ASSEMBLED statement — a fragment grep proves the fragments, not the executed plan.
 
 <!-- stages: 5 -->
-### Live external state at Stage-5 entry (#555 Phase 3)
-- Re-curl (or re-fetch) any live external surface a worked example cites AT STAGE-5 ENTRY and grep
-  every worked example against the fresh capture — external state moves between Stage 1 and
-  Stage 5; a stale capture silently verifies yesterday's world.
+### Live external state
+- Re-fetch any live external surface a worked example cites AT STAGE-5 ENTRY and grep every worked
+  example against the fresh capture.
 
 <!-- stages: 5 -->
 ### Tool / contract availability inside a swarm

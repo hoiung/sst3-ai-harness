@@ -8,6 +8,13 @@
 #          range.start / range.end are 1-indexed editor lines (#547 AC 7.1).
 # Engines: ripgrep (--literal mode); ast-grep --json=stream (structural, default).
 #          Missing engine → stderr contract + exit 127 (per Phase 5 hook + Ralph).
+# Blind:   structural mode (the default) is blind to comments and string literals (c4:T16):
+#          ast-grep matches syntax nodes, so a name that appears only in a
+#          comment, docstring or string returns zero rows and exit 0. A citation
+#          or comment-truth audit run in this mode is a false clean; its
+#          counter-query is --literal (ripgrep) or raw grep. Measured: one name
+#          in a comment, a docstring and a string -> structural 0 rows,
+#          --literal 3 (an identifier control -> structural 1).
 
 set -euo pipefail
 export LC_ALL=C

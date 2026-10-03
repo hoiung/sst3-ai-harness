@@ -1,5 +1,5 @@
 <!-- stages: 4 -->
-# Three-Tier Testing Framework — Stage-4 Canonical (#498 AC 4.1)
+# Three-Tier Testing Framework — Stage-4 Canonical
 
 BUILD-vs-USE testing model: the canonical (BUILD) requires all 3 tiers to EXIST; the USE clause requires all 3 tiers to RUN (fire & pass) on EVERY change (operator directive dotfiles#528 — supersedes the prior scope-matched fire), the only non-run being a documented `structural-inapplicable: <reason>`. Project test suite ("no regressions") = the union of checked-in Unit + Workflow + E2E tests.
 
@@ -19,7 +19,7 @@ BUILD-vs-USE testing model: the canonical (BUILD) requires all 3 tiers to EXIST;
 - **USE** (operator directive dotfiles#528 — all 3 RUN every change; supersedes scope-matched fire):
   - Unit AND Workflow AND E2E each RUN (fire & pass) for this change.
   - E2E may be *sized* to the change — a small backtest, or an actual execution change + cleanup — but it still RUNS.
-  - **E2E synthetic seeding (#555 Phase 3):** an E2E test needing real SQL execution seeds SYNTHETIC rows — it never reads prod data, and never gates a prod-read behind `requires_postgres`.
+  - E2E tests that execute real SQL seed SYNTHETIC rows and never read prod data or gate a prod-read behind `requires_postgres`.
   - The ONLY non-run is a tier recorded `structural-inapplicable: <reason>` (rare; e.g. a pure-doc diff has no Unit surface).
 - "Tests pass" means all 3 tiers RAN and PASS (or are documented `structural-inapplicable`), recorded in the required tier-evidence line (canonical: STANDARDS.md "Three-Tier Testing Framework"): `tiers: U=.. W=.. E2E=.. M=.. | BUILD-evidence:<file:line per tier>`.
 - **PROVE (third requirement beside EXIST and RUN — #567)**: for any diff that adds or modifies a **gate** (a test or check whose purpose is to reject a defect class), the tier-evidence line ALSO carries a mutation result — the gate shown to REDDEN on its re-injected defect, with ≥1 negative control that stays green — applied WITHIN whichever tier holds that gate. A gate that merely EXISTs and RUNs can pass unconditionally; only failure proves it. Absent the mutation table, the ACs that gate protects are recorded `unproven`, not `passed`. Spec + sweep quality gates: `mutation-verification.md` (single canonical — do not restate it here). Append `M=<reddened+control-green|unproven|n/a:no-gate-in-diff>` to the tier-evidence line.
@@ -35,4 +35,4 @@ The Workflow-Tier USE clause is canonically AP #18: real-CLI ≥3-repo-shape inv
 - `../../workflow/WORKFLOW.md` "Verification Loop" canonical tier checkboxes.
 - `../../standards/STANDARDS.md` "Three-Tier Testing Framework" subsection.
 - `../../standards/ANTI-PATTERNS.md` AP #18 — sample-invocation = Workflow Tier USE clause.
-- Per-shape recipes: see the "Tier coverage (Unit / Workflow / E2E)" column of the per-shape recipe table in `../../standards/stage-4/ap18-workflow-tier.md` (the table lives there, NOT in ANTI-PATTERNS.md — #560 corrected this stale pointer).
+- Per-shape recipes: see the "Tier coverage (Unit / Workflow / E2E)" column of the per-shape recipe table in `../../reference/ap18-workflow-tier-reference.md`.

@@ -591,6 +591,14 @@ def _main_clone_root(start: Path) -> Path | None:
     yields the MAIN clone even from inside a worktree (whose own toplevel lacks
     the sibling layout). A main clone has a `.git` *directory*. Returns None if no
     repo root is found within a bounded walk.
+
+    Only that exact worktree shape resolves to another directory. Any other
+    pointer resolves to the directory holding it: a submodule's
+    `gitdir: <super>/.git/modules/<name>`, a separate git dir, and an empty or
+    unreadable (including non-UTF-8) `.git` file. A submodule is its own
+    repository, so walking up to the superproject would name the wrong one.
+    extract-chat-agreements relies on that: it checks session ownership
+    against this root, and a wider root would accept another repo's sessions.
     """
     cur = start
     for _ in range(40):  # bounded — never an unbounded walk to /
@@ -600,20 +608,16 @@ def _main_clone_root(start: Path) -> Path | None:
         if dotgit.is_file():
             try:
                 txt = dotgit.read_text(encoding="utf-8").strip()
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 return cur
             if txt.startswith("gitdir:"):
                 gd = Path(txt.split(":", 1)[1].strip())
                 if not gd.is_absolute():
                     gd = (cur / gd).resolve()
-                # gd = <main>/.git/worktrees/<name> — walk up to the ".git" segment,
-                # its parent is the main clone root.
-                p = gd
-                while p.parent != p and p.name != ".git":
-                    p = p.parent
-                if p.name == ".git":
-                    return p.parent
-            return cur  # malformed pointer — fall back to the worktree dir
+                # gd = <main>/.git/worktrees/<name>; <main> is the main clone root.
+                if gd.parent.name == "worktrees" and gd.parent.parent.name == ".git":
+                    return gd.parent.parent.parent
+            return cur  # not a linked-worktree pointer — the dir holding it is the root
         if cur.parent == cur:
             break
         cur = cur.parent

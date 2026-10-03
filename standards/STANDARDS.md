@@ -46,10 +46,10 @@
 **JBGE** (Just Barely Good Enough): Document only what prevents problems.
 
 **Discoverability Requirement** (Issue #119): All SST3 files MUST be discoverable from CLAUDE.md in EVERY repo.
-- **Chain**: CLAUDE.md → workflow/WORKFLOW.md → stage-X → feature (<=4 steps)
-- **Validation**: `python $SST3/check-discoverability.py` during Verification Loop
+- **Chain**: CLAUDE.md → STANDARDS.md / WORKFLOW.md, or a stage's canon via `load-stage-rules.sh`
+- **Validation**: the reviewer, at Gate 3 (user-review-checklist §6)
 - **Exception**: CLAUDE_TEMPLATE.md (template), .sst3-local/ (project-specific)
-- **Enforcement**: Verification Loop BLOCKS merge if any repo fails discoverability check
+- **Enforcement**: an unreachable file is a Gate-3 finding; no script gates this (#577)
 
 **Don't Explain Claude to Claude** (Issue #119): Document YOUR rules/decisions/patterns. Not model capabilities or standard practices. ✓ "Ralph Tier 1 uses haiku for surface checks" ✗ "Haiku is fast"
 
@@ -233,7 +233,7 @@ See: ../workflow/WORKFLOW.md (Stage 1 — Research) for research-specific critic
 
 **Principle**: Use MANY subagents in LAYERS, cross-checking from different angles. Verify every finding against source. Document proof method inline.
 
-**Scope gate (read FIRST — this whole discipline is for SUBSTANTIVE work only)**: a swarm governs audits, migrations, cross-repo reviews — work that genuinely spans many files/claims. A **trivial, yes/no, single-file, or single-fact question is NOT swarm work**: answer it directly with one `grep` / read / `git` command, SOLO. Before launching ANY swarm or Workflow, ask "could one command answer this?" — if yes, just run it. Over-swarming a trivial lookup burns the operator's tokens for ZERO added correctness and reads as not thinking (dotfiles#534: 6 agents fired at a one-line yes/no about a single artifact — a single `grep` answered it; operator emphatic). "Ultracode" / "be thorough" raises the bar on substantive work; it does NOT license swarming trivial questions. Match agent count to the QUESTION, not to a standing default.
+**Scope gate (read FIRST — this whole discipline is for SUBSTANTIVE work only)**: a swarm governs audits, migrations, cross-repo reviews — work that genuinely spans many files/claims. A **trivial, yes/no, single-file, or single-fact question is NOT swarm work**: answer it directly with one `grep` / read / `git` command, SOLO. Before launching ANY swarm or Workflow, ask "could one command answer this?" — if yes, just run it. Over-swarming a trivial lookup burns the operator's tokens for ZERO added correctness and reads as not thinking (dotfiles#534: 6 agents fired at a one-line yes/no about a single artifact — a single `grep` answered it; operator emphatic). "Ultracode" / "be thorough" raises the bar on substantive work; it does NOT license swarming trivial questions. Match agent count to the QUESTION, not to a standing default. <!-- c4:T60 --> On Issue work, a Scope-gate skip rationale is written into the Issue body (one line: the skipped swarm or stage, and why one command answered it), not only the feedback file.
 
 **Rules**:
 1. **Subagent count is dynamic**: cover every directory, file, and claim category line-by-line. NEVER 2-3 as default. Size to work (e.g. 12 categories → ≥12 subagents, 20 files → 4-5 subagents). Stinginess produces shallow skims.
@@ -258,7 +258,7 @@ See: ../workflow/WORKFLOW.md (Stage 1 — Research) for research-specific critic
 
 **Rule**: the dynamic **Workflow tool** is the DEFAULT dispatch mechanism for every `/Leader` parallel swarm (Stage 1 research, Stage 2 draft-check, Stage 3 sanity-check, Stage 5 post-implementation audit). Author the swarm inline and run it via the Workflow tool; do NOT hand-dispatch Agent/Task subagents for these swarms. Plain Agent/Task dispatch is retained ONLY as a documented fallback for a trivial single-angle check (one reader, no cross-check layer). This supersedes #507's optional/`ultracode`-gated framing: "optional" had no reliable trigger — the imperative "Launch parallel subagents" overrode the soft "MAY", so the feature never fired even when explicitly directed. Ralph Review tiers (sequential Haiku→Sonnet→Opus, restart-on-fail) and the AP #20 "Layer 1/2/3" checkbox-MCP enforcement gates are NOT swarms — they stay Agent/Task and are NOT converted. The escalation Workflow is not a Ralph tier and does not convert Ralph's sequential tiers to a swarm: it is a distinct dispatch that fires when the restart bound is reached, produces fixes, and hands back to Ralph for tier verification.
 
-**Monitoring (AP #16)**: a backgrounded Workflow run is launched-not-done. The orchestrator MUST **monitor** the Workflow end-to-end: launch → await the completion notification (or poll its status) → read the run output → verify every finding against source (AP #14) before acting. A `wf_…` run id is recorded in the stage checkpoint as the audit trail. "Started" is never "complete".
+**Monitoring (AP #16)**: a backgrounded Workflow run is launched-not-done. The orchestrator MUST **monitor** the Workflow end-to-end: launch → await the completion notification (or poll its status) → read the run output → verify every finding against source (AP #14) before acting. A `wf_…` run id is recorded in the stage checkpoint as the audit trail. "Started" is never "complete". <!-- c4:T15 --> Workflow legs write to script-named paths, never leg-chosen ones. Narrative legs return free text ending in a fenced RESULT block or, if schema'd, cap string fields at 1,200+ chars. Never put `head`/`tail` between a writer and a load-bearing exit code (use `PIPESTATUS` or a full-output file; the Bash Output Budgets `tail -n 100` is for logs, not gating); gate chained commands (`set -e` or per-step exit checks). A pausable run saves each leg's result to a file and ends with a continuation script over them; never edit one prompt of a concurrent fan-out and resume (later legs re-run live). Syntax-check the script or run a 1-agent smoke leg before full dispatch.
 
 **Scope-scaling (no runaway)**: making the Workflow tool the default for four stages does NOT relax AP #14 scope-scaling — swarm size **matches coverage** (one subtask per real angle / directory / claim-cluster), neither a fixed cap nor unbounded. The Workflow auto-scales DOWN for tiny jobs (a Stage-2 draft-check needs few subtasks) and UP for large audits, always governed by AP #14 "no stingy, no runaway". **Kill/timeout seam for a frozen background Workflow** (freeze-detection parity with a hung subprocess): a backgrounded Workflow run surfaces a task-id + a `wf_…` run id. Monitor it per AP #16 — await the completion notification (the harness re-invokes you when it finishes) or watch `/workflows` / read the run's task-output file. If a run exceeds its expected wall-clock with NO completion notification AND `/workflows` (or the output file) shows no forward progress, treat it as frozen: stop it with `TaskStop <task-id>`, then re-author with a smaller fan-out (fewer concurrent subtasks) or split the swarm into sequential batches and re-run. Do NOT leave a frozen run unbounded — an un-monitored background Workflow is the AP #16 fire-and-forget failure mode. (Wall-clock baseline: a typical /Leader audit swarm completes in minutes; a run with no notification well past that, and no `/workflows` progress, is the kill trigger.)
 
@@ -273,13 +273,13 @@ See: ../workflow/WORKFLOW.md (Stage 1 — Research) for research-specific critic
 | Coverage / synthesis | `sonnet` (default for Layer-1 legs) | Stage-1 angles, Stage-2 draft-check, scope-vs-audit, wiring, dangling-pointer, goal-alignment |
 | Adversarial / quality-critical | `opus` | AP #14 Layer-2 cross-check, raw-tools-only, voice-canonical comprehensive-walk, §3-deferral re-litigation, contract/TOCTOU |
 
-**Economics note**: subagents share NO prompt cache — each builds its own prefix from zero (5-min TTL). Uncached-prefix × fan-out is the dominant token cost, NOT reasoning depth. Model tier is the only cost lever the Workflow tool exposes (no effort knob); two adjacent levers are fan-out (AP #14) and per-leg prefix size (a tight scope snippet + ≤5 files shrinks each leg).
+**Economics note**: subagents share NO prompt cache — each builds its own prefix from zero (5-min TTL). Uncached-prefix × fan-out is the dominant token cost, NOT reasoning depth. Model tier is the only cost lever the Workflow tool exposes (no effort knob); two adjacent levers are fan-out (AP #14) and per-leg prefix size (a tight scope snippet + ≤5 files shrinks each leg). <!-- c4:T51 --> A swarm cost estimate prices each leg per model tier and per duty delta at its measured cost, never one blended per-agent average, which under-counts the Opus and long-duty legs.
 
 **HARD invariant**: cost-optimisation MUST NEVER tier the verification legs (Layer-2 adversarial / AP #14 cross-check) below Opus. Tiering down a Layer-1 coverage leg is fine; tiering down the cross-check that catches the coverage leg's blind spots defeats the layering.
 
 **Design principle**: start deterministic — a static role→tier map via `agent({model})` + this table. Do NOT build adaptive / budget-aware tiering in v1; ship the deterministic table first.
 
-**OPEN integration-research** (tagged `[research]`, not v1 gates): validate role→tier quality-vs-cost across n>1 real runs; deterministic-table vs adaptive-escalation comparison; StructuredOutput reliability by tier; token-rate-limit optimisation (Sonnet = fewest raw tokens); confirm no leg needs the 1M window (a Sonnet/Haiku override drops to 200K — fine for lean legs). Provenance: Issue #16. StructuredOutput-reliability-by-tier: ANSWERED (#555 Phase 4) — see "Workflow Tool Operational Quirks".
+**OPEN integration-research** (tagged `[research]`, not v1 gates): validate role→tier quality-vs-cost across n>1 real runs; deterministic-table vs adaptive-escalation comparison; token-rate-limit optimisation (Sonnet = fewest raw tokens); confirm no leg needs the 1M window (a Sonnet/Haiku override drops to 200K — fine for lean legs). Provenance: Issue #16. Answered: StructuredOutput reliability by tier ("Workflow Tool Operational Quirks").
 
 <!-- stages: 1 -->
 #### Stage 1 Layer-2 Adversarial Gap-Finder Discipline (Theme 8, #477)
@@ -302,7 +302,7 @@ See: ../workflow/WORKFLOW.md (Stage 1 — Research) for research-specific critic
 
 **Enforcement**: Leader.md Stage 1 step 2a (Layer-2 adversarial gap-finder MANDATORY). ANTI-PATTERNS.md AP #14d (Scope-gap blindness — Stage 1 research specific).
 
-**Required structural Layer-2 angles (AC 1.8)** — the Layer-2 prompt MUST include these 8 named angles when applicable: (1) **hot/cold path enumeration** — per data-consumption site enumerate cold-path validation, hot-path validation, and revalidation interval; flag any path with cold-path validation lacking hot-path; (2) **async/sync compatibility** — verify the async/sync context of any recommended reuse target matches the call site; (3) **operator-semantics grep** — verify `>=`/`>`/`<=`/`<` in threshold claims against source, not prose; (4) **tool-disambiguation** — when the operator names a specific product/tool, verify exact feature identity against official docs; (5) **self-disconfirmation** — list 2-3 simplest scenarios under which the alleged gap does NOT exist, and verify each against source; (6) **Sibling-pattern enumeration (AP #14e)** — for any finding about a function, pattern class, or family member, enumerate ALL callers / branches / sibling files that could share the same defect class before returning a verdict: extract the CONCEPT and use concept-based grep, not literal-pattern grep. A literal sweep finds only what already shares your vocabulary, so a family member named differently survives it untouched. Mirrors the Stage-5 **Sibling-pattern enumeration (AC 5.3)** angle — deliberate twins, edit both or neither; (7) **Source-as-consumer enumeration (AP #30)** — when a producer and its consumer share no token, the producer is itself a candidate consumer. Enumerate paired surfaces by asking "what else emits or consumes this fact?", never by grepping the producer's own name; a token-blind pair escapes both the AP #24 literal-marker grep and the AP #14e pattern-class sweep. Mirrors the Stage-3 **Producer-surface enumeration** angle. (8) **canonical-assumption challenge (#555 Phase 4 — Issue #1-s5 ord2)** — read the active repo's CLAUDE.md cover-to-cover; flag the most load-bearing architectural claim adopted as a starting truth without recent operator confirmation.
+**Required structural Layer-2 angles (AC 1.8)** — the Layer-2 prompt MUST include these 8 named angles when applicable: (1) **hot/cold path enumeration** — per data-consumption site enumerate cold-path validation, hot-path validation, and revalidation interval; flag any path with cold-path validation lacking hot-path; (2) **async/sync compatibility** — verify the async/sync context of any recommended reuse target matches the call site; (3) **operator-semantics grep** — verify `>=`/`>`/`<=`/`<` in threshold claims against source, not prose; (4) **tool-disambiguation** — when the operator names a specific product/tool, verify exact feature identity against official docs; (5) **self-disconfirmation** — list 2-3 simplest scenarios under which the alleged gap does NOT exist, and verify each against source; (6) **Sibling-pattern enumeration (AP #14e)** — for any finding about a function, pattern class, or family member, enumerate ALL callers / branches / sibling files that could share the same defect class before returning a verdict: extract the CONCEPT and use concept-based grep, not literal-pattern grep. A literal sweep finds only what already shares your vocabulary, so a family member named differently survives it untouched. Mirrors the Stage-5 **Sibling-pattern enumeration (AC 5.3)** angle — deliberate twins, edit both or neither. <!-- c4:T01 --> The sweep covers every absence or completeness claim, not only function-X findings; <!-- c4:T66 --> a retired-identifier sweep adds a data-flow pass over scripts that replay committed run settings into a live run; (7) **Source-as-consumer enumeration (AP #30)** — when a producer and its consumer share no token, the producer is itself a candidate consumer. Enumerate paired surfaces by asking "what else emits or consumes this fact?", never by grepping the producer's own name; a token-blind pair escapes both the AP #24 literal-marker grep and the AP #14e pattern-class sweep. Mirrors the Stage-3 **Producer-surface enumeration** angle. (8) **canonical-assumption challenge** — read the active repo's CLAUDE.md cover-to-cover; flag the most load-bearing architectural claim adopted as a starting truth without recent operator confirmation.
 
 **See "AC Verifiability — pre-Stage-3 sub-gate" under "Workflow Validation Gate" below** — the Acceptance Criteria Measurability rule is merged into Workflow Validation Gate as its pre-Stage-3 half. Cut #8 / AC 1.18 (#498).
 
@@ -316,7 +316,7 @@ When a Stage 5 fix touches an artefact whose canonical lives on a **parked branc
 <!-- stages: 1,3,5 -->
 #### Scope Snippet Rule (#406 F5.1)
 
-When dispatching ≥10 subagents on an issue, the main agent writes a **frozen scope snippet** (≤2K tokens, scope + acceptance criteria only) to `${SST3_TMP:-/tmp}/sst3-issue-<N>-scope.md` and passes the path to subagents instead of the full issue body. ONE "scout" subagent reads the full issue and validates that the snippet covers the relevant scope. Saves O(N × full-issue-tokens) of subagent context bloat.
+When dispatching ≥10 subagents on an issue, the main agent writes a **frozen scope snippet** (≤2K tokens, scope + acceptance criteria only) to `${SST3_TMP:-/tmp}/sst3-issue-<N>-scope.md` and passes the path to subagents instead of the full issue body. ONE "scout" subagent reads the full issue and validates that the snippet covers the relevant scope. Saves O(N × full-issue-tokens) of subagent context bloat. <!-- c4:T03 --> Each pinned fact carries `{value, source: operator-said|repo-derived|inherited, class: MEASURED|INFERRED|UNVERIFIED, command, artefact@time, cost if re-run, cross-check}`; an inherited HEAD/tree fact is re-derived before pinning.
 
 #### RESULT Block Schema (#406 F5.2)
 
@@ -334,9 +334,9 @@ Every swarm subagent ends its return with a fenced block:
 - wrapper_invoked: no|yes|n/a   (REQUIRED for Layer-2 raw-tools-only subagents — `no` proves the raw-only failsafe ran without wrapper-lane)
 ```
 
-Main agent parses the RESULT block; subagent prose body is informational. Reduces typical 4-8K-token return per subagent to ~500 tokens with zero signal loss because every claim already has provenance per Rule 5 above. **When a subagent discusses graph queries, prepend `mcp_graph_available: yes|no` as the FIRST line** — AP #19 "Subagent wrapper-lane access" bullet (Ralph Tier 1 uses this with documented-fallback evidence: `no`+evidence=PASS, `no`+no-evidence=FAIL). **Wrapper-lane disposition (Issue #445)**: under the wrapper-lane, this field is always `no` — wrappers are bash-tool calls, not MCP-protocol calls, and subagents do not inherit the bash-tool set from the main agent in the same way. Documented fallback (grep + manual file reads) is the expected path under wrapper-lane, not a degradation. Ralph Tier 1 sees `no` + valid fallback evidence → PASS, not FAIL.
+Main agent parses the RESULT block; subagent prose body is informational. Reduces typical 4-8K-token return per subagent to ~500 tokens with zero signal loss because every claim already has provenance per Rule 5 above. **When a subagent discusses graph queries, prepend `mcp_graph_available: yes|no` as the FIRST line** — AP #19 "Subagent wrapper-lane access" bullet (Ralph Tier 1 uses this with documented-fallback evidence: `no`+evidence=PASS, `no`+no-evidence=FAIL). **Wrapper-lane disposition (Issue #445)**: under the wrapper-lane, this field is always `no` — wrappers are bash-tool calls, not MCP-protocol calls, and subagents do not inherit the bash-tool set from the main agent in the same way. Documented fallback (grep + manual file reads) is the expected path under wrapper-lane, not a degradation. Ralph Tier 1 sees `no` + valid fallback evidence → PASS, not FAIL. <!-- c4:T50 --> In a schema'd Workflow leg, required RESULT fields are schema-required (in `required`), never prompt-only.
 
-**Completeness-claim re-verification (AC 5.10)**: when any Layer-1 angle makes a *completeness claim* — "N sites", "no leaks", "0 occurrences", "every caller handled" — a raw-tools-only Layer-2 re-verification of that SPECIFIC claim is mandatory (direct grep / ast-grep / find, `wrapper_invoked: no`). A completeness claim is exactly the assertion most vulnerable to a wrapper recall-miss or a too-narrow pattern; one independent raw sweep per such claim is the failsafe. Cross-ref AP #29 (absence is an unverified hypothesis) + AP #14e (concept-based grep).
+**Completeness-claim re-verification (AC 5.10)**: when any Layer-1 angle makes a *completeness claim* — "N sites", "no leaks", "0 occurrences", "every caller handled" — a raw-tools-only Layer-2 re-verification of that SPECIFIC claim is mandatory (direct grep / ast-grep / find, `wrapper_invoked: no`). A completeness claim is exactly the assertion most vulnerable to a wrapper recall-miss or a too-narrow pattern; one independent raw sweep per such claim is the failsafe. Cross-ref AP #29 (absence is an unverified hypothesis) + AP #14e (concept-based grep). <!-- c4:T11 --> Every clean verdict or figure states the set and commit it was measured over, and that set is diffed against an independently enumerated target set before the verdict is trusted.
 
 <!-- stages: 4 -->
 ### Bash Output Budgets (#406 F4.7)
@@ -378,11 +378,11 @@ The wrapper-lane is **NOT a replacement** for subagents. See ANTI-PATTERNS.md AP
 
 See also `../reference/tool-selection-guide.md` "Decision Tree: Code-Understanding Queries" and `../docs/guides/code-query-playbook.md`.
 
-**Three-signal contract policy (#447 Phase 5)**: every wrapper emits a quorum of (exit code, stdout NDJSON, stderr sentinel) — consumers MUST check ≥2 of 3 to declare clean. Single-signal trust is a known wrapper failure mode (silent-zero, silent-clean, sentinel-missing classes). The full 33-shape failure-mode taxonomy lives in `../docs/research/wrapper-lane-vs-raw/03_comparison.md` — out-of-line to keep this section actionable.
+**Three-signal contract policy**: every wrapper emits exit code, stdout NDJSON and stderr sentinel; consumers MUST check ≥2 of 3 to declare clean (taxonomy: `../docs/research/wrapper-lane-vs-raw/03_comparison.md`).
 
-**Raw-tool cross-validation REQUIRED moments (#447 Phase 5)**: dispatch a raw-only subagent counter-query in these 4 cases — (a) any change to wrapper-lane scripts (`../scripts/sst3-*.sh`); (b) any structural query producing zero results (silent-zero is the failure mode this catches); (c) any post-implementation review of changes >100 LOC; (d) any time a subagent's RESULT block contains `wrapper_invokable: yes` AND `wrapper_invoked: no` without documented reason. The raw-only counter-query is the audit-time failsafe for wrapper recall drift; without it, wrapper bugs cascade through Stage 4 + Stage 5 invisibly.
+**Raw-tool cross-validation REQUIRED moments**: dispatch a raw-only subagent counter-query on (a) any `../scripts/sst3-*.sh` change; (b) any zero-result structural query; (c) post-implementation review of >100 LOC changes; (d) a RESULT with `wrapper_invokable: yes` AND `wrapper_invoked: no` and no documented reason.
 
-**AI-agent fallback heuristic (#447 Phase 5; semantics clarified by Issue #456)**: when a wrapper exits 127 / 1 / 2, the agent MUST — (1) look up the failed query type in `../docs/guides/code-query-playbook.md` "Raw Fallback Recipes" table, run the listed raw command, and record the substitution + raw command + result count in the RESULT block; (2) if no table row matches the query, escape to subagent-only mode per AP #19 12-moments carve-out, citing "no fallback recipe" as the escape reason; (3) NEVER silently substitute raw output for wrapper output without recording the substitution — silent fallback hides recall delta which is the exact signal Phase 5 cross-validation depends on. **Exit 127 semantics post-#456**: means the engine is genuinely missing on disk (npm/cargo/pipx install never ran). Pre-#456 the same code ALSO fired when the engine was on disk but PATH was not propagated to non-interactive shells; that case is now closed by `sst3-bash-utils.sh` self-bootstrap. Run `<your-dotfiles-clone>/scripts/install.sh` to install missing engines — do NOT add custom PATH workarounds in the calling agent.
+**AI-agent fallback heuristic**: when a wrapper exits 127 / 1 / 2, the agent MUST (1) run the raw command the `../docs/guides/code-query-playbook.md` "Raw Fallback Recipes" table lists for the query type and record substitution + raw command + result count in the RESULT block; (2) if no row matches, go subagent-only per the AP #19 12-moments carve-out, citing "no fallback recipe"; (3) NEVER substitute raw output for wrapper output without recording it. Exit 127 = engine missing on disk: run `<your-dotfiles-clone>/scripts/install.sh`, never a custom PATH workaround.
 
 <!-- stages: 3 -->
 ### Double-Guardrail Principle (N32 — user-authoritative)
@@ -439,7 +439,7 @@ Coverage = `canonicals_walked` matches `skill_canonical_files` (no separate coun
 <!-- stages: 4 -->
 ### Contract Verification — Three Contracts (Issue #1407 post-mortem)
 
-> **Canonical: stage-4/contract-verification.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Stage-4 checklist form (verification commands): `stage-4/contract-verification.md`.
 
 Every change that crosses a boundary must verify all three contracts:
 
@@ -464,7 +464,7 @@ Every change that crosses a boundary must verify all three contracts:
 <!-- stages: 4 -->
 ### Fail Fast, No Silent Fallbacks
 
-> **Canonical: stage-4/observability-fail-fast.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Stage-4 write-time invariants: `stage-4/observability-fail-fast.md`.
 
 **Principle**: Fail loudly at startup. Silent fallbacks hide bugs. Fix root cause. Error indicators must be unmistakable (cannot be confused with valid data).
 
@@ -479,7 +479,7 @@ Every change that crosses a boundary must verify all three contracts:
 <!-- stages: 4 -->
 ### Observability — No Code Without Logs, Metrics, and Audit Trails
 
-> **Canonical: stage-4/observability-fail-fast.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Stage-4 write-time invariants: `stage-4/observability-fail-fast.md`.
 
 **Principle**: Logs, metrics, and audit trails are mandatory at write time. If a system can run silently, it will — and you'll have no signal when it produces the wrong answer.
 
@@ -500,7 +500,7 @@ Every change that crosses a boundary must verify all three contracts:
 
 **Rules**:
 1. Every script launch verified end-to-end: tail logs, check exit code, verify output, confirm side effects.
-2. Every `run_in_background` command polled via BashOutput at sensible intervals OR notification hook configured. Never fire and walk away.
+2. Every `run_in_background` command watched via Monitor or its output file, OR its completion notification awaited. Never fire and walk away.
 3. Every test run reported with pass/fail counts, not just "tests ran".
 4. Every commit/push/merge verified: commit landed, push succeeded, CI started, CI finished.
 5. Every deployment includes post-deploy health checks before declaring done.
@@ -670,7 +670,7 @@ The opaque-token mechanism for hash-redacting literal business identifiers in pu
 
 **Why**: claude.ai-hosted artifacts get lost — they are unbranded, indistinguishable from one another, and not in any repo, so the operator cannot find or attribute one later. Local artifacts are (1) branded (hoiboy.uk identity) and (2) organised in the owning repo (committed, versioned, findable). Findability + branding are the point; the local helper also leak-scans, but that is a secondary benefit, not the reason.
 
-**Enforcement**: PreToolUse hook `sst3-artifact-block-guard.sh` (fail-closed DENY exit 2 on the `Artifact` matcher; `SST3_ALLOW_ARTIFACT=1` operator escape hatch) + this always-load rule. Build local per `.claude/skills/artifact-branding/SKILL.md` and commit it to the repo.
+**Enforcement**: `"enableArtifact": false` in canonical `claude/settings.json` removes the `Artifact` tool from every session (needs Claude Code >= 2.1.242; `<your-dotfiles-clone>/scripts/install.sh` checks the CLI before merging it) + this always-load rule. Build local per `.claude/skills/artifact-branding/SKILL.md` and commit it to the repo.
 
 **Evidence**: dotfiles#538 — walkthrough diagrams rendered to claude.ai URLs got lost / indistinguishable; operator: artifacts must be local so they are "branded" and "organised in the repo" (findable again), not scattered on claude servers.
 
@@ -702,7 +702,7 @@ The opaque-token mechanism for hash-redacting literal business identifiers in pu
 <!-- stages: always -->
 ### Named-Entity Scope — Don't Broaden a Named Set
 
-**Principle**: When the operator enumerates specific entities, values, or a SET (e.g. `MB100/MBS100`, a named file list, specific tickers/IDs/issues), that enumeration IS the scope. NEVER broaden a named set to "all" / "every" / "uniform" / "any" as a simplification — a superset is a different (wrong) scope, even when it looks "more general" or "cleaner".
+**Principle**: When the operator enumerates specific entities, values, or a SET (e.g. `MB100/MBS100`, a named file list, specific tickers/IDs/issues), that enumeration IS the scope. NEVER broaden a named set to "all" / "every" / "uniform" / "any" as a simplification — a superset is a different (wrong) scope, even when it looks "more general" or "cleaner". Likewise a copy remark is recorded as one instance (which string, which change), never widened into a rule unless the operator states the rule.
 
 **Failure mode**: an agent reads "keep the MB100/MBS100 rows" and ships "keep ANY row / uniform across all strategies" — the opposite of a precise instruction (operator caught this live on auto_pb#1522, 2026-06-03). Broadening feels like generalisation but silently violates the contract.
 
@@ -718,10 +718,10 @@ The opaque-token mechanism for hash-redacting literal business identifiers in pu
 **Why**: Anti-scope-creep is NOT about feedback being caught post-hoc — that is too late. The live failure is agents drifting from what was AGREED IN CHAT: overengineering, inventing features, or shipping the opposite of what was agreed. A self-reported reconciliation table does not fix this (the drifting agent writes its own verdicts — it catches omission, not self-deception). The fix is VERIFIER-LED and grounded in the recorded transcript (Claude Code stores every session as JSONL under `~/.claude/projects/<project-slug>/<session>.jsonl`, which survives compaction).
 
 **Mechanism** (one early pass at Stage 1; the full panel at Stage 3 and Stage 5):
-1. **Transcript-reader** — `../scripts/extract-chat-agreements.py` extracts the operator's raw human-typed messages (drops tool_result / `<system-reminder>` / `<command-*>` noise).
+1. **Transcript-reader** — `../scripts/extract-chat-agreements.py` extracts the operator's raw human-typed messages (drops tool_result / `<system-reminder>` / `<command-*>` noise). <!-- c4:T64 --> Only what the operator typed is his position: unattributed commit or doc prose is never cited as one he held or overruled (`git log -1 --format=%B <sha>` shows its author).
 2. **`## Agreements Log`** — appended to the research file AS agreements are made (captured-when-agreed > reconstructed-late; a low-bias anchor for the verifier).
 3. **Three-model neutral verifier panel** — one Haiku + one Sonnet + one Opus, dispatched IN PARALLEL via the Workflow tool's per-agent `model` override (model diversity = different blind spots; distinct from Ralph's SEQUENTIAL code-review). Each fresh-context verifier is given ONLY the extracted messages + the agreements log and a NEUTRAL prompt ("from these messages, what did the operator ask for / agree to / rule out? cite each; no speculation") — it is NOT shown the agent's scope/issue/diff, so it cannot be led into rubber-stamping. It produces a fresh INDEPENDENT interpretation.
-4. **Main-agent divergence check** — the main agent double-checks each independent interpretation against (a) its own understanding and (b) the current artifact (research scope @ S1 / issue scope @ S3 / delivered diff @ S5). Divergence is the drift signal, classified with three tokens: `invented` (in the artifact, never in the interpretation), `dropped` (in the interpretation, missing from the artifact), `inverted` (the artifact contradicts the interpretation).
+4. **Main-agent divergence check** — the main agent double-checks each independent interpretation against (a) its own understanding and (b) the current artifact (research scope @ S1 / issue scope @ S3 / delivered diff @ S5). Divergence is the drift signal, classified with three tokens: `invented` (in the artifact, never in the interpretation), `dropped` (in the interpretation, missing from the artifact), `inverted` (the artifact contradicts the interpretation). <!-- c4:T75 --> A panel leg whose output quotes none of the supplied messages is re-run before it is read.
 5. **Operator sign-off** — the consolidated `## Chat Reconciliation` report is POSTED and the operator approves it at the two commitment points: Stage 3 (before `gh issue create`) and Stage 5 (before sign-off).
 
 **Honest limit**: the deterministic floors only guarantee the verifier RAN and the report is POSTED (cannot be silently skipped) — the Stage-1 `## Agreements Log` presence gate, the Stage-3 `## Chat Reconciliation` binary-grep gate, and the Stage-5 `C17` presence check. A script cannot judge whether a verdict is honest; the three independent model reads + the operator's sign-off are what catch truthfulness.
@@ -784,7 +784,7 @@ The opaque-token mechanism for hash-redacting literal business identifiers in pu
 <!-- stages: 4 -->
 ### Wiring Verification
 
-> **Canonical: stage-4/verification-loop.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Stage-4 loop checkboxes: `stage-4/verification-loop.md`.
 
 **Principle**: After ANY fix/enhance/refactor, verify changed code is wired into existing functions and processes.
 
@@ -906,11 +906,11 @@ Canonical audit signal for verifying that `mcp__github-checkbox__update_issue_ch
 
 **Why the body section, not the timeline**: GitHub's timeline API (`mcp__github-checkbox__get_issue_events`) does not emit `edited` events for an issue author's own body edits on their own issue — a documented API behavior. Since solo-workflow agents ARE the issue author in ~99% of cases, PATCH-event-based audit false-negatives every honored invocation. The body content itself, however, is always externally readable via `mcp__github__get_issue` or `mcp__github-checkbox__get_issue_checkboxes`, regardless of who authored the edit.
 
-**Structure of the signal**: `<MCP servers — operator-only>/github-checkbox/server.py` function `append_to_proof_of_work` (defined at `:225`, invoked at `:333` — re-derive with `grep -n 'append_to_proof_of_work' mcp-servers/github-checkbox/server.py` rather than trusting these; the figures here read "lines 214-261, invoked at :322" until #565 Ralph T3 round 3 measured them) appends a structured entry per invocation to the body's `## Proof of Work` section. Each entry contains the checkbox text + evidence string supplied at call time. The body PATCH that toggles `[ ]` → `[x]` is the SAME PATCH that appends the entry, so presence in Proof of Work strictly implies the tool was called.
+**Structure of the signal**: `<MCP servers — operator-only>/github-checkbox/server.py` function `append_to_proof_of_work` (locate it with `grep -n`) appends a structured entry per invocation to the body's `## Proof of Work` section. Each entry names its checkbox by the box text, cut to its first 80 characters and `…` when longer, and carries the evidence string supplied at call time. The body PATCH that toggles `[ ]` → `[x]` is the SAME PATCH that appends the entry, so presence in Proof of Work strictly implies the tool was called.
 
 **Verification procedure** (for Ralph tiers and any external auditor):
 1. Fetch issue body via `mcp__github__get_issue` (or `mcp__github-checkbox__get_issue_checkboxes` for live-state cross-check).
-2. Parse the `## Proof of Work` section. Each entry starts with `- **<checkbox text>**: <evidence>`.
+2. Parse the `## Proof of Work` section. Each entry starts with `- **<checkbox text>**: <evidence>`; match a cut label (`…`) to its box by prefix.
 3. For every `[x]` box in the body, there MUST be a matching entry in Proof of Work. Missing entry = AP #20 violation (comment-only / narrative-only progress).
 4. For each entry, verify the cited evidence:
    - `file:line` claims → `mcp__github__get_file_contents` or local Read on the solo branch
@@ -1093,7 +1093,7 @@ them separately, because the weaker one is where the drift hides.
 <!-- stages: 4 -->
 ### File Housekeeping
 
-> **Canonical: stage-4/file-housekeeping.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Per-Issue housekeeping invariants: `stage-4/file-housekeeping.md`.
 
 **Delete vs Archive**:
 - **Delete**: Temp files, build artifacts, failed experiments with no learnings
@@ -1105,7 +1105,7 @@ them separately, because the weaker one is where the drift hides.
 - **Naming**: `{repo}-{issue#}-{description}.{ext}` (e.g., `dotfiles-121-api-design.md`)
 - **NOT for**: Handovers (use GitHub Issue comments)
 - **Cleanup**: Script-based deletion when issue closed OR file age >30 days
-- **Script**: `python ../scripts/cleanup-temp.py` (dry-run by default)
+- **Script**: `python $SST3/cleanup-temp.py` (dry-run by default)
 - **Script Documentation**: See [scripts/README.md](../scripts/README.md)
 - **Enforcement**: Pre-commit hook `no-temp-folder` blocks commits with temp/ paths (see Issue #241)
 
@@ -1166,7 +1166,7 @@ Housekeeping in 3 places (during work, after merge, STANDARDS.md) is intentional
 <!-- stages: 4 -->
 ## Three-Tier Testing Framework
 
-> **Canonical: stage-4/three-tier-testing.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Stage-4 BUILD/USE summary: `stage-4/three-tier-testing.md`.
 
 > **Source of truth**: the operator's verbatim framing of the three tiers (the car analogy + the BUILD-vs-USE clarification), recorded in the originating Issue's verbatim Source block. This section transcribes that framing; it does NOT paraphrase it into any one project's failure-mode list. On any conflict the verbatim Source block wins. (Meta: the anti-twist rule — "Polish vs Twist (Semantic Frame Preservation)" / ANTI-PATTERNS.md AP #25 — applies to this section's own wording.)
 
@@ -1224,7 +1224,7 @@ Run this at authoring time AND again at the Verification Loop:
 ```
 tiers: U=<pass|fail|structural-inapplicable:reason> W=<pass|fail|structural-inapplicable:reason> E2E=<pass|fail|structural-inapplicable:reason> M=<reddened+control-green|unproven|n/a:no-gate-in-diff> | BUILD-evidence:<file:line of the checked-in test per tier>
 ```
-All 3 tiers must show `pass` (or a documented `structural-inapplicable:<reason>`). A `fail` blocks the Verification Loop; a bare "tests pass" without this line does not satisfy the gate. The `M=` field is the mutation-verification result for gate-bearing diffs (#567 — spec: `stage-4/mutation-verification.md`, duty site: the `stage-4/three-tier-testing.md` PROVE clause): `M=unproven` blocks exactly as a `fail` does — a gate-bearing diff without its mutation table is `unproven`, never `passed`; `M=n/a:no-gate-in-diff` records that the diff carries no gate.
+All 3 tiers must show `pass` (or a documented `structural-inapplicable:<reason>`). A `fail` blocks the Verification Loop; a bare "tests pass" without this line does not satisfy the gate. The `M=` field is the mutation-verification result for gate-bearing diffs (#567 — spec: `stage-4/mutation-verification.md`, duty site: the `stage-4/three-tier-testing.md` PROVE clause): `M=unproven` blocks exactly as a `fail` does — a gate-bearing diff without its mutation table is `unproven`, never `passed`; `M=n/a:no-gate-in-diff` records that the diff carries no gate. <!-- c4:T21 --> The evidence beside the line records the exact command per tier (literal invocation, not only a count).
 
 <!-- stages: 2 -->
 ### Tier composition — never substitute (worked illustration, general)
@@ -1241,7 +1241,7 @@ Three is canonical because it maps to the three real failure surfaces: a part is
 
 <!-- stages: always -->
 ### Glossary: "regression test" vs the three tiers
-"**The project test suite**" — what the Stage 4 Verification Loop runs, and what "no regressions" refers to — is the **union of the checked-in Unit + Workflow + E2E tests**, not any single tier. "**Regression test**" is NOT a synonym for the Unit Tier, nor for any one tier: it is the property that the existing suite (all tiers together) still passes after a change. "**Smoke test**" is a fast subset (typically Unit-Tier-weighted) — necessary but NOT sufficient for the Workflow or E2E tiers (AP #18). Use a tier name when you mean a tier; say "the project test suite" / "regression run" when you mean "all checked-in tests still pass".
+"**The project test suite**" — what the Stage 4 Verification Loop runs, and what "no regressions" refers to — is the **union of the checked-in Unit + Workflow + E2E tests**, not any single tier. "**Regression test**" is NOT a synonym for the Unit Tier, nor for any one tier: it is the property that the existing suite (all tiers together) still passes after a change. "**Smoke test**" is a fast subset (typically Unit-Tier-weighted) — necessary but NOT sufficient for the Workflow or E2E tiers (AP #18). Use a tier name when you mean a tier; say "the project test suite" / "regression run" when you mean "all checked-in tests still pass". <!-- c4:T25 --> Gate 1 runs the project test suite locally when CI is dark (WORKFLOW.md Verification Loop).
 
 <!-- stages: 2 -->
 ### Cost of skipping each tier (why BUILD is unconditional)
@@ -1258,7 +1258,7 @@ Three is canonical because it maps to the three real failure surfaces: a part is
 - **issue-template.md PREREQUISITE CHECKPOINT** — splits into three tier bullets so every Issue scopes all three at draft time.
 - **Ralph `sonnet-review.md`** — per-tier test sections + the E2E-Tier system gate (review-time verification).
 - **Anti-pattern / enforcement anchors** — Unit Tier = "Test-Prod Call Coverage Discipline" (call-seam grep); Workflow Tier = AP #18 "Smoke-Tested Pipeline … (Workflow-Tier validation)"; E2E Tier = AP #26 "E2E System Verification".
-- **Per-shape mapping** — the per-shape recipe table in `../standards/stage-4/ap18-workflow-tier.md` carries a "Tier coverage (Unit / Workflow / E2E)" column (the table lives there, NOT in ANTI-PATTERNS.md — #560 corrected this stale pointer); the CLAUDE.md per-repo narrative twin is annotated to match and kept in sync in the same pass (AP #9 single-source-edits).
+- **Per-shape mapping** — the per-shape recipe table in `../reference/ap18-workflow-tier-reference.md` carries a "Tier coverage (Unit / Workflow / E2E)" column; the CLAUDE.md per-repo narrative twin is annotated to match and kept in sync in the same pass (AP #9 single-source-edits).
 
 ---
 
@@ -1269,7 +1269,7 @@ Doctrine home for the SEC lane (`sst3-sec-*`, offline ast-grep) and the DEP lane
 
 **Shape-gating (no vacuous PASS).** SEC/DEP run only where they can actually parse the production surface. Applicability is resolved by `sst3_utils.sec_dep_applicable(repo_or_shape) -> {sec, dep}`:
 - **Code-bearing → run**: Service, eBay-MCP, Config-heavy (ast-grep-parseable Python/Rust/JS + a dependency manifest — SEC and DEP both run), and mt5-ea (SEC only: ast-grep-parseable Python production surface but NO dependency manifest, so DEP skip-clean is honest, not vacuous — the `(True, False)` pair in `_SHAPE_SEC_DEP`, #567 Phase 7).
-- **Skip-clean → do NOT run**: non-code shapes (Static-blog/Static-site/Voice-doc/Brainstorm/Business-ops), day-1 scaffolds, AND surfaces ast-grep/pip-audit cannot parse — GAS (`.gs`, test-harness Python only) and lab-automation (PowerShell + bash). Running SEC/DEP there would scan nothing meaningful and report a clean PASS that means nothing — the precise false-PASS this gate exists to prevent. The helper fails loud on an unknown repo/shape rather than defaulting to a silent skip.
+- **Skip-clean → do NOT run**: non-code shapes (Static-blog/Static-site/Voice-doc/Brainstorm/Business-ops), day-1 scaffolds, AND surfaces ast-grep/pip-audit cannot parse — GAS (`.gs`, test-harness Python only) and lab-automation (PowerShell + bash). Running SEC/DEP there would scan nothing meaningful and report a clean PASS that means nothing — the precise false-PASS this gate exists to prevent. The helper fails loud on an unknown repo/shape rather than defaulting to a silent skip. A TypeScript-only service (`service-ts`) runs DEP (npm audit) but not SEC, whose wrappers read TypeScript only for subprocess calls and secret literals. GAS, lab-automation and `service-ts` hold production code, so their SEC skip is could-not-look, not clean: `sst3_utils.sec_skip_reason()` names it, the gate prints it, and the lane is recorded `structural-inapplicable` with a raw-grep sweep (c4:T16).
 
 **Fail-loud contract (three signals).** SEC/DEP use the existing `sst3-check.sh` orchestrator. `--strict` escalates any wrapper that **could not look** to **exit 2** (distinct from findings=1 and clean=0); the per-phase stderr-sentinel must be present to confirm a wrapper actually ran. Could-not-look is **engine-missing OR phase-timeout OR phase-error OR a missing wrapper script OR a non-executable wrapper** — every one means the run did not establish that the target is clean, and none may be waved through. Do not read that list as closed: it is the set of routes MEASURED so far, and it has grown twice. It said "all three" until #565 Ralph round 10 measured a fourth and fifth — a wrapper absent from disk, and a wrapper present but not executable, both recorded as `skipped`, which nothing consumed, so `--strict` returned **0** with an EMPTY stderr, byte-identical to a run where every phase completed. The lesson generalises past this contract: when you convert the members in front of you, go and look for the ones that arrive by a different path first. Engine-missing is re-run after `<your-dotfiles-clone>/scripts/install.sh`; a timeout is re-run with a larger `SST3_CHECK_PHASE_TIMEOUT` (default 90s per phase). Timeout was added to this contract by dotfiles#565 escalation-1, which measured the orchestrator recording `doc-lint:timeout` in its phases array while nothing gated on it: only engine-missing and findings drove the exit code, so a timed-out phase on an otherwise-clean tree exited **0**. Worse, a timeout REDUCES the finding count (measured: 326 with all phases complete, 189 with two timed out), so the vacuous run looks like an improvement. Diff-scope with `--paths-from <ndjson>` (forwarded to the SEC/DEP wrappers).
 
@@ -1307,7 +1307,7 @@ Test in this order:
 <!-- stages: 2,3 -->
 ### Workflow Validation Gate (AP #18 — MANDATORY)
 
-> **Canonical: stage-4/verification-loop.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Stage-4 loop checkboxes: `stage-4/verification-loop.md`.
 
 This gate fires at TWO ends of the workflow:
 - **Pre-Stage-3 (AC Verifiability)**: every AC must be falsifiable (see "AC Verifiability — pre-Stage-3 sub-gate" below).
@@ -1315,7 +1315,7 @@ This gate fires at TWO ends of the workflow:
 
 Unit + smoke tests are necessary but NOT sufficient for pipeline / backtest / CLI-wiring / cross-module propagation changes. Every such change MUST pass a **real-CLI sample invocation** against real DB before the issue closes.
 
-**Per-shape recipes**: see the per-shape sample-invocation table (#447 Phase 7) in `../standards/stage-4/ap18-workflow-tier.md` — the table lives THERE, not in ANTI-PATTERNS.md (#560 corrected this stale pointer). The shape list is deliberately NOT restated here: it started at 6 and has grown with each consumer onboard, so any copy of it rots. Read the table for the current set. The wrapper-script trigger (#447 Phase 5) is also enumerated there. For non-auto_pb repos, use the per-shape recipe from that table rather than the auto_pb-shaped 8-item-liquid-basket pattern.
+**Per-shape recipes**: the per-shape sample-invocation table in `../reference/ap18-workflow-tier-reference.md` (not restated here: a copy rots). Non-auto_pb repos use their shape's recipe from that table, not the auto_pb 8-item-liquid-basket pattern.
 
 Cross-link: the **three-signal contract policy** + **Raw-tool cross-validation REQUIRED moments** + **AI-agent fallback heuristic** above ("Structural Code Queries" section) bound when raw-tool counter-queries become MANDATORY at the wrapper-lane boundary. AP #18 sample invocation and raw-tool cross-validation are complementary gates: AP #18 covers downstream-consumer verification, the raw-tool counter-query covers recall verification. Both fire on wrapper-script changes per Phase 5.
 
@@ -1325,9 +1325,9 @@ Cross-link: the **three-signal contract policy** + **Raw-tool cross-validation R
 - Coverage pre-flights, auto-bootstrap paths, snapshot-suffix / experiment-path logic
 - Multi-module function-arg propagation chains (>1 hop from CLI to DB write)
 - Any change where a `**kwargs`-accepting mock could silently hide the regression
-- **Idempotency re-run paths** (#477 Phase 5 AC 5.2 — Theme 4): for changes claiming idempotency or feature-detect logic (install-path scripts, bootstrap guards, "if X already configured: skip" branches), the sample MUST cover BOTH first-install AND re-run-with-feature-already-present paths. (dotfiles#474 evidence — single-direction sample hides re-run-corruption bug class.)
-- **Documentation cross-reference resolution** (#477 Phase 5 AC 5.2 — Theme 4): for infrastructure-shape work (homelab bootstrap, runbook scripts, multi-node setup), Stage 5 swarm MUST include an angle that walks every script-path / URL / file-reference / cross-link in the Issue's docs and confirms each resolves (`ls <path>` / `curl -fsI <url>` / `grep -F <ref> <target>`). (dotfiles#474 evidence — dangling references pass Stage 4 but break next runner.)
-- **Every-return-path wiring** (#477 Phase 5 AC 5.2 — Theme 4): for cache-read or guard-helper additions (functions whose job is "check state and return early"), Stage 4 must enumerate every `return` statement in the guarded function via `grep -n "return" <file>` and confirm each return path either emits the new instrumentation/cache-write OR is documented as exempt. (Issue #1451 evidence — missed return-path silently skips the new behaviour on the missed branch.)
+- **Idempotency re-run paths**: for idempotency or feature-detect logic (e.g. "if X already configured: skip"), the sample MUST cover BOTH first-install AND re-run-with-feature-already-present paths.
+- **Documentation cross-reference resolution**: for infrastructure-shape work (e.g. homelab bootstrap), a Stage 5 swarm angle MUST confirm every script-path / URL / file-reference / cross-link in the Issue's docs resolves (`ls`/`grep -F` exit 0, `curl -fsI` 2xx).
+- **Every-return-path wiring**: for added cache-read or guard helpers ("check state and return early"), Stage 4 must enumerate every `return` in the guarded function (`grep -n return <file>`) and confirm each emits the new instrumentation/cache-write OR is documented exempt.
 
 **Gate (verification loop item — NOT optional)**:
 1. Small liquid basket (8 tickers typical), real CLI, real DB.
@@ -1363,7 +1363,7 @@ Cross-link: the **three-signal contract policy** + **Raw-tool cross-validation R
 
 **Path portability (dotfiles#516 Stage 5)**: verification commands MUST use **repo-relative paths** run from the repo root (e.g. `grep -nE '...' STANDARDS.md`, `wc -l <path-under-the-repo>`), never a main-clone-absolute path (`/home/<user>/DevProjects/<repo>/...`). An absolute canonical-clone path silently no-ops when CWD is a Stage-4 worktree (the AC 4.2 / AP #29 canonical-clone-absolute-path failure) AND false-FAILs when run against a main clone that has not been fast-forwarded post-merge. An AC whose own verify command hardcodes the main-clone path is not portably falsifiable — rewrite it relative before dispatch.
 
-**Pre-fix FAIL assertion (#522)**: a falsifiable verify is not enough — it must also DISCRIMINATE. Dry-run each AC verification command against the current PRE-FIX tree and confirm it returns the FAIL value (non-zero exit / the pre-impl count); a verify that passes pre-fix is vacuous (it would pass whether or not the work is done) and MUST be re-scoped (line-range / exact-pattern / call-site anchor) before dispatch. Pin `/usr/bin/grep` in any piped grep verify — the default `grep` is a ugrep function wrapper that emits nothing in a pipe, a silent vacuous PASS.
+**Pre-fix FAIL assertion (#522)**: a falsifiable verify is not enough — it must also DISCRIMINATE. Dry-run each AC verification command against the current PRE-FIX tree and confirm it returns the FAIL value (non-zero exit / the pre-impl count); a verify that passes pre-fix is vacuous (it would pass whether or not the work is done) and MUST be re-scoped (line-range / exact-pattern / call-site anchor) before dispatch. Pin `/usr/bin/grep` in any piped grep verify — the default `grep` is a ugrep function wrapper that emits nothing in a pipe, a silent vacuous PASS. <!-- c4:T08 --> The verify also runs through the enforcing gate, on artefacts that exist by the end of its own phase, over the AC's full contract, evidenced on the named target.
 
 **Enforcement**:
 - Leader.md Stage 2 step 4e (AC verifiability sweep — author runs before subagent dispatch).
@@ -1681,9 +1681,9 @@ Capture quality research once in `docs/research/` (project root, NOT SST3/). Cre
 See: `../reference/research-reference-guide.md` for complete guide, file structure, naming conventions, and template.
 
 <!-- stages: 1,3,5 -->
-## Workflow Tool Operational Quirks (#555 Phase 4)
+## Workflow Tool Operational Quirks
 
-Field-measured quirks of the Workflow dispatch tool — companion to "Default Dispatch Mechanism — the Workflow tool (#514)". Kept as its own tagged section so it loads at the swarm-bearing stages (1/3/5) without joining the Stage-4 emit.
+Companion to "Default Dispatch Mechanism — the Workflow tool (#514)"; tagged 1,3,5 on purpose (kept out of the Stage-4 emit).
 
 - **JS sandbox has no env/shell**: `${HOME}` / `process.env` fail silently — hardcode paths and values in prompt strings; pre-launch, grep the script for `\${[A-Z_]`.
 - **Output nesting**: the real return nests under `.result` inside a notification envelope — address it first; for background Workflows read the first ~400 bytes to locate the `.result` wrapper before parsing.

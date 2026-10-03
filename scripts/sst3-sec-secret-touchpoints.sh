@@ -61,10 +61,11 @@ if [[ -n "$PATHS_FROM" ]]; then
         echo "ERROR: --paths-from file not readable: $PATHS_FROM" >&2
         exit 64
     fi
-    while IFS= read -r p; do
-        [[ -n "$p" ]] && ALLOWED_PATHS+=("$p")
-    done < <(read_paths_from "$PATHS_FROM")
+    load_paths_from "$PATHS_FROM" ALLOWED_PATHS
 fi
+# The engines scan the listed files themselves (sst3-bash-utils.sh paths_from_scan_targets).
+declare -a SCAN_TARGETS=()
+paths_from_scan_targets ALLOWED_PATHS SCAN_TARGETS
 path_allowed() {
     local file="$1"
     [[ ${#ALLOWED_PATHS[@]} -eq 0 ]] && return 0
@@ -75,10 +76,10 @@ path_allowed() {
 }
 
 emit_record() {
-    local file="$1" line="$2" kind="$3" ident="$4"
+    local file="$1" line="$2" kind="$3" ident="$4" end_line="${5:-$2}"
     if path_allowed "$file"; then
-        jq -nc --arg f "$file" --argjson l "$line" --arg k "$kind" --arg i "$ident" \
-            '{file:$f, line:$l, kind:$k, identifier:$i}'
+        jq -nc --arg f "$file" --argjson l "$line" --argjson e "$end_line" --arg k "$kind" --arg i "$ident" \
+            '{file:$f, line:$l, end_line:$e, kind:$k, identifier:$i}'
         SST3_EMITTED_COUNT=$((SST3_EMITTED_COUNT + 1))
     fi
 }
@@ -96,17 +97,19 @@ PY_PATTERNS=(
 
 AG_OUT=$(mktemp)
 for spec in "${PY_PATTERNS[@]}"; do
+    [[ ${#SCAN_TARGETS[@]} -gt 0 ]] || break  # a list naming no existing file: scan nothing
     IFS='|' read -r kind pattern <<< "$spec"
     AG_RC=0
-    ast-grep run --pattern "$pattern" --lang python --json=stream > "$AG_OUT" 2>/dev/null || AG_RC=$?
+    run_over_targets "$AG_OUT" SCAN_TARGETS ast-grep run --pattern "$pattern" --lang python --json=stream || AG_RC=$?
     ast_grep_check_rc "sst3-sec-secret-touchpoints" "$AG_RC" || { rm -f "$AG_OUT"; exit 0; }
     while IFS= read -r record; do
         [[ -z "$record" ]] && continue
         file=$(jq -r '.file // ""' <<< "$record")
         line=$(jq -r '(.range.start.line + 1) // 0' <<< "$record")  # #547 AC 7.1: 1-indexed
+        end_line=$(jq -r '(.range.end.line + 1) // 0' <<< "$record")  # a call can span lines (#577)
         ident=$(jq -r '.metaVariables.single.KEY.text // ""' <<< "$record")
         [[ -z "$file" ]] && continue
-        emit_record "$file" "$line" "$kind" "$ident"
+        emit_record "$file" "$line" "$kind" "$ident" "$end_line"
     done < "$AG_OUT"
 done
 rm -f "$AG_OUT"
@@ -119,8 +122,23 @@ declare -a RG_RULES=(
     'aws_secret_key|aws_secret_access_key\s*=\s*["\x27][^"\x27]+["\x27]'
 )
 
+RG_OUT=$(mktemp)
 for rule in "${RG_RULES[@]}"; do
+    [[ ${#SCAN_TARGETS[@]} -gt 0 ]] || break  # a list naming no existing file: scan nothing
     IFS='|' read -r kind regex <<< "$rule"
+    # The target is never empty, and that is load-bearing, not cosmetic. With no path
+    # argument rg reads stdin whenever stdin is a pipe or a regular file — and
+    # pre-commit supplies exactly that — so every rule below emitted ZERO records in
+    # each automated context (pre-commit, pre-push, CI) while still firing correctly
+    # when run by hand from a terminal. A secret-detection gate that works only when a
+    # human is watching is a fail-OPEN gate. Measured before that fix: a file holding
+    # AKIA-prefixed keys and a password literal passed `sst3-sec` clean under a pipe
+    # and emitted 2 records under `< /dev/null`. Its exit code is read, not discarded:
+    # 2 (a named file it cannot read, a bad regex) was once `|| true`, so the scan
+    # could miss a file and still look clean (#577 escalation sweep).
+    RG_RC=0
+    run_over_targets "$RG_OUT" SCAN_TARGETS rg --json -e "$regex" --no-messages || RG_RC=$?
+    ast_grep_check_rc "sst3-sec-secret-touchpoints" "$RG_RC" rg || { rm -f "$RG_OUT"; exit 0; }
     while IFS= read -r json_line; do
         [[ -z "$json_line" ]] && continue
         type=$(jq -r '.type' <<< "$json_line" 2>/dev/null || echo "")
@@ -131,16 +149,8 @@ for rule in "${RG_RULES[@]}"; do
         # Truncate the match to keep the NDJSON small.
         ident="${match:0:60}"
         [[ -n "$file" && -n "$line" ]] && emit_record "$file" "$line" "$kind" "$ident"
-    # The `.` path target is load-bearing, not cosmetic. With no path argument rg
-    # reads stdin whenever stdin is a pipe or a regular file — and pre-commit
-    # supplies exactly that — so every rule below emitted ZERO records in each
-    # automated context (pre-commit, pre-push, CI) while still firing correctly
-    # when run by hand from a terminal. A secret-detection gate that works only
-    # when a human is watching is a fail-OPEN gate. Measured before the fix: a
-    # file containing AKIA-prefixed keys and a password literal passed `sst3-sec`
-    # clean under a pipe and emitted 2 records under `< /dev/null`. Naming the
-    # target makes the scan stdin-independent, matching the ast-grep stage above.
-    done < <(rg --json -e "$regex" --no-messages . 2>/dev/null || true)
+    done < "$RG_OUT"
 done
+rm -f "$RG_OUT"
 
 exit 0

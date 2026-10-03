@@ -32,7 +32,8 @@
 #           on overflow, ROUND — both purely for the audit trail;
 #         * RESTARTS is moved by `open_new_round()` and nothing else, and that
 #           is reachable ONLY from `--restart`;
-#         * `--escalate` is the only reset.
+#         * `--escalate` is the only reset within a stage; `--stage5` opens
+#           Stage 5's own loop at Stage-5 entry (Stage 4's numbers are archived).
 #       THERE IS NO EVENT-DERIVED FLOOR. Unsignalled, the count stays 0 no
 #       matter how many events arrive — 9 ralph-review events still read 0.
 #       An earlier draft of this header promised one ("the event model is the
@@ -51,6 +52,8 @@
 #         .agent_type  — gate; anything other than `ralph-review` is ignored.
 #         .cwd         — the session's working directory. THIS WINS over the
 #                        hook process's own CWD (see KEYING below).
+#         .stop_hook_active — true on a continuation stop (the tier was sent back
+#                        by a SubagentStop hook); ignored, already counted.
 #       Flag modes read NO payload, so `</dev/null` is safe on them and only
 #       on them. Never redirect stdin on an event-mode invocation: it discards
 #       the JSON and the hook silently sees an empty payload.
@@ -75,6 +78,13 @@
 #   --escalate           main agent signals the class-sweep escalation:
 #                        restarts reset to zero, boundary logged
 #   --get                print the current restart count (0 if no state)
+#   --stage5             main agent signals Stage-5 entry (c4:T06, dotfiles#577):
+#                        Stage 4's restarts + escalation are ARCHIVED into
+#                        stage4_* fields and the loop state resets, so a scoped
+#                        Stage-5 Ralph restart does not inherit Stage 4's terminal
+#                        state. The KEY is unchanged: a new key would silently zero
+#                        every in-flight issue's count (the #568 key change needed a
+#                        migration). Idempotent: a second --stage5 keeps the archive.
 #
 # EXIT   0 normal. 2 = unknown mode. 3 = INERT (branch derivation failed) —
 #        deliberately NOT a bare 0, so the boundary is visible instead of reading
@@ -143,11 +153,11 @@ LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib-branch-issue.sh"
 
 # ---------------------------------------------------------------- observability
 # AP #12: every decision boundary emits a structured line AT WRITE TIME. The
-# boundaries are exactly the four questions this hook answers: is it
-# ralph-review, did branch derivation succeed, did a new round open, and is this
-# the restart-BOUND -> escalation boundary. That last one is the event whose
-# frequency this whole Issue exists to measure — unlogged, it is written to
-# nothing and λ stays at n=1 forever.
+# `audit "<event>"` calls below are the list of boundaries; it grows with the
+# hook (the continuation stop and --stage5 came after it was first written), so
+# it is not restated here. The restart-BOUND -> escalation boundary is the event
+# whose frequency this whole Issue exists to measure — unlogged, it is written
+# to nothing and λ stays at n=1 forever.
 audit() {
   local event="$1" detail="$2"
   # AUDIT_RESTARTS lets a caller log the value that was TRUE AT THE BOUNDARY
@@ -304,10 +314,13 @@ json_field() { # <field> — no jq dependency; the payload is a flat event objec
 
 AGENT_TYPE=""
 EVENT_CWD=""
+STOP_ACTIVE=""
 if [[ -n "$RAW" ]]; then
   AGENT_TYPE="$(json_field agent_type)"
   [[ -z "$AGENT_TYPE" ]] && AGENT_TYPE="$(json_field subagent_type)"
   EVENT_CWD="$(json_field cwd)"
+  # A JSON boolean, so not a json_field string match.
+  [[ "$RAW" =~ \"stop_hook_active\"[[:space:]]*:[[:space:]]*true ]] && STOP_ACTIVE=true
 fi
 
 # stdin `.cwd` WINS; the process CWD is the documented fallback only.
@@ -430,6 +443,10 @@ lock_state
 # every writer — including --print-state-path's materialisation below — has a
 # complete record to persist.
 RESTARTS=0; ROUND=1; TIER_EVENTS=0; LAST_ESC="null"
+# c4:T06 — the stage this loop belongs to, and Stage 4's final numbers once Stage 5
+# opens (null until then). A pre-#577 state file has none of these: it is a Stage-4
+# count, and absence is migration, never corruption.
+STAGE=4; S4_RESTARTS="null"; S4_LAST_ESC="null"
 
 # A FAILED WRITE MUST NOT REPORT SUCCESS. This function's return was previously
 # unchecked at every call site, under `set -uo pipefail` with no errexit — so an
@@ -449,8 +466,8 @@ write_state() {
   fi
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   tmp="$STATE_FILE.$$.tmp"
-  if ! printf '{"key":"%s","restarts":%s,"round":%s,"tier_events_in_round":%s,"last_escalation_restart":%s}\n' \
-        "$KEY" "$RESTARTS" "$ROUND" "$TIER_EVENTS" "$LAST_ESC" >"$tmp" 2>/dev/null ||
+  if ! printf '{"key":"%s","restarts":%s,"round":%s,"tier_events_in_round":%s,"last_escalation_restart":%s,"stage":%s,"stage4_restarts":%s,"stage4_last_escalation_restart":%s}\n' \
+        "$KEY" "$RESTARTS" "$ROUND" "$TIER_EVENTS" "$LAST_ESC" "$STAGE" "$S4_RESTARTS" "$S4_LAST_ESC" >"$tmp" 2>/dev/null ||
      ! mv "$tmp" "$STATE_FILE" 2>/dev/null; then
     rm -f "$tmp" 2>/dev/null || true
     printf 'RALPH-COUNTER WRITE FAILED: could not persist state to %s. The restart count was NOT updated — do not read the previous value as current. Check permissions on %s.\n' \
@@ -500,6 +517,15 @@ read_num() { # <field>
   [[ "$v" =~ ^[0-9]+$ ]] || return 1
   printf '%s' "$v"
 }
+# null|N for a field that may be ABSENT (-> null). Returns 1 when the field is present
+# but unreadable in write_state's single-line shape — fail-closed, like LAST_ESC.
+read_opt() { # <field>
+  local v
+  grep -q "\"$1\"" "$STATE_FILE" 2>/dev/null || { printf 'null'; return 0; }
+  v="$(grep -oE "\"$1\"[[:space:]]*:[[:space:]]*(null|[0-9]+)[[:space:]]*[,}]" "$STATE_FILE" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*//; s/[[:space:]]*[,}]$//')"
+  [[ -n "$v" ]] || return 1
+  printf '%s' "$v"
+}
 if [[ -f "$STATE_FILE" ]]; then
   RESTARTS="$(read_num restarts)"                || state_corrupt "field 'restarts' is missing, non-numeric, or negative"
   ROUND="$(read_num round)"                      || state_corrupt "field 'round' is missing, non-numeric, or negative"
@@ -526,6 +552,13 @@ if [[ -f "$STATE_FILE" ]]; then
   else
     LAST_ESC="null"
   fi
+  # c4:T06 — the Stage-5 scope fields, fail-closed the same way when present. Each
+  # key is matched WITH its leading quote, so `"restarts"` never reads the
+  # `stage4_restarts` field and `"last_escalation_restart"` never reads its archive.
+  STAGE_RAW="$(read_opt stage)" || state_corrupt "field 'stage' is present but not readable as null or a non-negative integer"
+  [[ "$STAGE_RAW" == "null" ]] && STAGE=4 || STAGE="$STAGE_RAW"
+  S4_RESTARTS="$(read_opt stage4_restarts)" || state_corrupt "field 'stage4_restarts' is present but not readable as null or a non-negative integer"
+  S4_LAST_ESC="$(read_opt stage4_last_escalation_restart)" || state_corrupt "field 'stage4_last_escalation_restart' is present but not readable as null or a non-negative integer"
 fi
 
 # Boundary 4: the restart-BOUND -> escalation boundary. Logged as soon as it is
@@ -643,6 +676,25 @@ case "$MODE" in
     fi
     exit 0 ;;
 
+  --stage5)
+    # c4:T06 (dotfiles#577 AC 3.8). Stage 5 may run its own, scoped Ralph loop over
+    # its fixes. Without this, that loop inherited Stage 4's state: a Stage 4 that
+    # ended escalated read every Stage-5 --restart as TERMINAL BOUNDARY CROSSED, and
+    # a Stage 4 that ended at the bound started Stage 5 already spent.
+    # Idempotent — a second --stage5 (a resume after a compact) must not overwrite
+    # the archive with Stage 5's own numbers.
+    if [[ "$STAGE" -ge 5 ]]; then
+      audit "stage5-already-entered" "stage=$STAGE — archive kept (stage4_restarts=$S4_RESTARTS stage4_last_escalation_restart=$S4_LAST_ESC)"
+      exit 0
+    fi
+    S4_RESTARTS="$RESTARTS"; S4_LAST_ESC="$LAST_ESC"
+    RESTARTS=0; ROUND=1; TIER_EVENTS=0; LAST_ESC="null"; STAGE=5
+    # Persist before announcing, as --escalate does: a log line attesting an archive
+    # that never landed is the defect the persist-before-announce rule exists for.
+    write_state || exit 4
+    audit "stage5-entry" "archived stage4_restarts=$S4_RESTARTS stage4_last_escalation_restart=$S4_LAST_ESC; the stage-5 loop starts at 0 (key unchanged)"
+    exit 0 ;;
+
   event) ;;
   *)
     printf 'sst3-ralph-restart-counter: unknown mode %s\n' "$MODE" >&2
@@ -661,6 +713,15 @@ if [[ -z "$RAW" ]]; then
 fi
 if [[ "$AGENT_TYPE" != "$MATCH_AGENT" ]]; then
   audit "ignored" "agent_type=${AGENT_TYPE:-none} != $MATCH_AGENT"
+  exit 0
+fi
+# Boundary 2: a continuation stop. When a SubagentStop hook returns additionalContext
+# (sst3-subagent-result-parser.sh, dotfiles#577 AC 1.2) the subagent runs one more turn and
+# stops AGAIN with stop_hook_active=true. That is the same tier, already counted at its
+# first stop — counting it too booked two tier events for one nudged tier (measured in the
+# AC 1.2 live E2E: tier_events 1 then 2 for a single ralph-review dispatch).
+if [[ "$STOP_ACTIVE" == "true" ]]; then
+  audit "ignored" "stop_hook_active=true — the same tier stopping again after a SubagentStop hook sent it back; counted at its first stop"
   exit 0
 fi
 

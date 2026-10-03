@@ -13,10 +13,10 @@
 #                                 string when not in a git repo, no branch, or the
 #                                 branch doesn't match the convention.
 #
-# Sourced by: sst3-session-context-injector.sh, sst3-tier-a-ac-binding-gate.sh,
-#             sst3-stage-order-gate.sh, sst3-stash-guard.sh (#528 Stage-5 dedup),
-#             sst3-ralph-restart-counter.sh (#568). Five, not the four this line
-#             claimed until #569 counted them for the AC 1.3 caller analysis.
+# Sourced by: sst3-session-context-injector.sh, sst3-stage-order-gate.sh,
+#             sst3-stash-guard.sh (#528 Stage-5 dedup), sst3-ralph-restart-counter.sh
+#             (#568). Re-derive before relying on this list:
+#             grep -l '_lib-branch-issue.sh"' claude/hooks/*.sh
 # Mirrors the canonical solo-branch convention (sst3_utils.SOLO_BRANCH_RE /
 # sst3-bash-utils.sh::sst3_solo_branch_alt, #509 AC6.5) — keep the anchored
 # pattern below in sync with that canonical if the convention changes.
@@ -59,8 +59,8 @@ derive_issue_num_from_branch() {
   # Anchored to the solo / worktree-solo convention ONLY (the `^...solo[/+-]issue-`
   # prefix mirrors SOLO_BRANCH_RE). A bare `issue-N` on a non-solo branch
   # (e.g. `feature/issue-42`) must NOT yield a spurious issue number — that
-  # would inject false issue context into the session-context-injector and
-  # the Tier-A AC-binding gate. (#509 Stage-5: 6th branch-matcher site unified.)
+  # would put a false issue number into every hook that sources this file.
+  # (#509 Stage-5: 6th branch-matcher site unified.)
   issue_num="$(printf '%s' "$branch" | grep -oE '^(worktree-)?solo[/+-]issue-[0-9]+' | grep -oE '[0-9]+$' || printf '')"
   printf '%s' "$issue_num"
 }

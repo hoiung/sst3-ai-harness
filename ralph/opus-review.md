@@ -56,10 +56,10 @@ Thorough architectural review.
 
 ### Wrapper-Lane Architectural Depth Checks
 
-> Doc-only exemption: [`_doc-only-exemption.md`](_doc-only-exemption.md). Preconditions: [`_wrapper-lane-preconditions.md`](_wrapper-lane-preconditions.md). Fallback: [`_fallback-clause.md`](_fallback-clause.md).
+> Doc-only exemption: [`_doc-only-exemption.md`](_doc-only-exemption.md). Preconditions: [`_wrapper-lane-preconditions.md`](_wrapper-lane-preconditions.md). Fallback: [`_fallback-clause.md`](_fallback-clause.md). (`$SST3` in the commands below: the Script path section of the Preconditions file.)
 
-- [ ] **Dead code detection**: `bash scripts/sst3-code-large.sh 200 <lang>` + manual orphan scan. For each candidate: `bash scripts/sst3-code-callers.sh <name> <lang>` returns empty in same module ⇒ orphan. Subagent confirms whether reflection/dynamic dispatch (not orphan) vs true orphan (cleanup target).
-- [ ] **Impact scope validation**: `bash scripts/sst3-code-impact.sh <base-branch>` — enumerate all impacted modules; identify unexpected cross-boundary edges. Document each boundary: intended (defence-in-depth / architectural layering) vs emergent (refactor target). Phase A wrapper-lane does not expose `max_depth`; deeper-than-1-hop requires subagent walk.
+- [ ] **Dead code detection**: `bash $SST3/sst3-code-large.sh 200 <lang>` + manual orphan scan. For each candidate: `bash $SST3/sst3-code-callers.sh <name> <lang>` returns empty in same module ⇒ orphan. Subagent confirms whether reflection/dynamic dispatch (not orphan) vs true orphan (cleanup target).
+- [ ] **Impact scope validation**: `bash $SST3/sst3-code-impact.sh <base-branch>` — enumerate all impacted modules; identify unexpected cross-boundary edges. Document each boundary: intended (defence-in-depth / architectural layering) vs emergent (refactor target). Phase A wrapper-lane does not expose `max_depth`; deeper-than-1-hop requires subagent walk.
 - [ ] **Large functions audit**: confirm no function in diff exceeded 200 lines (`sst3-code-large.sh 200 <lang>` scoped via subagent grep on diff files). If any did → architectural red flag, require refactor.
 - [ ] **AP #19 full compliance**: includes Sonnet's over-trust spot-check, plus: any "no results" response in area with unsupported-language files (YAML, JSON, SQL, shell) explicitly broadened to subagent exploration before drawing negative conclusion; wrapper `last_updated` recorded in RESULT.
 
@@ -100,4 +100,4 @@ Output: `<promise>OPUS_PASS</promise>`
 2. Explain why it violates standards
 3. Suggest specific fix
 4. Do NOT output promise
-5. Ralph loop continues iteration
+5. The main agent fixes and restarts from Tier 1 — bounded: up to 3 restarts, one escalation, then ONE further loop; a FAIL in that loop is stop-and-report, not another iteration

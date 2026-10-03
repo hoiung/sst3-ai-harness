@@ -131,4 +131,33 @@ AFTER_HASH=$(sha256sum "$F" | cut -d' ' -f1)
 [[ "$BEFORE_HASH" == "$AFTER_HASH" ]] || fail "HELD row mutated the file (AC 1.2 pending-guard clobber)"
 echo "PASS: pending-guard HELD, file unchanged"
 
-echo "OK: feedback-multiblock-549 fixture (5/5 assertion groups passed)"
+# --- 6. applied_in follows the status, for EVERY status the tool accepts (per-stage-feedback-capture.md:
+#        "When status moves to applied or partial, set applied_in"; #577 AC 5.1). Each flip is handed
+#        applied_in 577: applied + partial write it on the line after the status, superseded + rejected
+#        write none. A status with no expectation below fails, so a new enum member cannot pass untested.
+STATUSES=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import feedback_parser as fp; print(" ".join(s for s in fp.IMPROVEMENT_STATUS_ENUM if s != "pending"))' "$SCRIPTS_DIR")
+[[ -n "$STATUSES" ]] || fail "no statuses derived from IMPROVEMENT_STATUS_ENUM"
+TDS=$(mktemp -d -t feedback_multiblock_549s.XXXXXX)
+trap 'rm -f "$TD"/* 2>/dev/null; rmdir "$TD" 2>/dev/null; rm -rf "$TDS" 2>/dev/null || true' EXIT
+for S in $STATUSES; do
+  case "$S" in
+    applied|partial) WANT=yes ;;
+    superseded|rejected) WANT=no ;;
+    *) fail "status $S has no applied_in expectation in this fixture" ;;
+  esac
+  mkdir "$TDS/$S"
+  G="$TDS/$S/feedback-multiblock-1.md"
+  cp "$HERE/feedback-multiblock-1.md" "$G"
+  printf '[{"file": "%s", "stage": 5, "block_ordinal": 1, "new_status": "%s", "note": "fixture", "applied_in": "577"}]\n' "$G" "$S" > "$TDS/$S.json"
+  bash "$TOOL" --apply --tuples "$TDS/$S.json" >/dev/null 2>&1 || fail "$S apply exit != 0"
+  [[ "$(sed -n "${STATUS_LINE}p" "$G")" == "**improvement_status**: $S" ]] || fail "$S flip did not land at parser status_line $STATUS_LINE"
+  if [[ "$WANT" == yes ]]; then
+    [[ "$(sed -n "$((STATUS_LINE + 1))p" "$G")" == "**applied_in**: 577" ]] || fail "$S row has no applied_in on the line after its status"
+  elif grep -q '^\*\*applied_in\*\*: 577' "$G"; then
+    fail "$S row got applied_in"
+  fi
+  python3 "$PARSER" "$G" >/dev/null || fail "$S-flipped fixture no longer validates"
+done
+echo "PASS: applied_in written for applied + partial, withheld for superseded + rejected"
+
+echo "OK: feedback-multiblock-549 fixture (6/6 assertion groups passed)"

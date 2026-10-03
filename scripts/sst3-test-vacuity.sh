@@ -72,13 +72,27 @@
 #                         equality) cannot see it.
 # These classes remain reviewer work (Ralph break-one-claim angle), not this
 # script's. Found by #567 Ralph Tier-2 break-one-claim; disclosed per canon.
+# UNSUPPORTED LANGUAGE (c4:T16, #577): TypeScript / JavaScript test files
+#   (vitest, jest: .ts .tsx .mts .cts .js .jsx .mjs .cjs) are named as
+#   unsupported, per file, instead of crashing the Python parser. So are the
+#   *.test.* / *.spec.* JS/TS files a bare run finds, with or without Python
+#   tests beside them (node_modules excluded). The run exits 2 (could-not-look) unless a Python
+#   file it did scan has findings (exit 1), and prints the manual sweep for
+#   the vitest forms: expect(<literal>), a bare .toThrow(), expect(x) compared
+#   with x itself, and an it()/test() block with no expect.
+#   Any other explicitly passed file whose extension is not .py/.pyw (a shell
+#   or PowerShell harness among the diff's test files) is named the same way,
+#   as `non-Python (.<ext>)`, and the files after it are still scanned. Before
+#   #577 Ralph r2 prep it reached the Python parser, printed ENGINE CRASHED and
+#   stopped the run. A file with no extension is still parsed as Python.
 # Output:  STDOUT — NDJSON, one object per finding: {file, line, kind, detail}
 #          STDERR — always emits the sentinel:
 #                   "sst3-test-vacuity: scanned <N> file(s), <M> finding(s)"
 # Exit:    0 = ran clean over >=1 scanned file, 1 = findings (this wrapper is a
 #          GATE, not a triage reporter — AC 4.1/4.3 wire it pre-Tier-1, so
 #          findings block), 2 = could-not-look (engine crashed / unparseable
-#          file / USAGE ERROR on bad arguments / NOTHING SCANNED — a run that
+#          file / UNSUPPORTED LANGUAGE (TypeScript/JavaScript tests, above) /
+#          USAGE ERROR on bad arguments / NOTHING SCANNED — a run that
 #          scanned zero files proved nothing and must never read as clean;
 #          #567 Ralph T3 F2+F4, mirrors sst3-check --strict semantics),
 #          127 = engine missing.
@@ -113,7 +127,41 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 python3 - "$@" <<'PYEOF'
-import ast, glob, json, re, sys
+import ast, glob, json, os, re, sys
+
+# c4:T16 (#577): test files this Python-AST gate cannot read, named per file.
+UNSUPPORTED_LANG = {
+    ".ts": "TypeScript", ".tsx": "TypeScript", ".mts": "TypeScript", ".cts": "TypeScript",
+    ".js": "JavaScript", ".jsx": "JavaScript", ".mjs": "JavaScript", ".cjs": "JavaScript",
+}
+JS_TEST_GLOBS = ("**/*.test.*", "**/*.spec.*")
+PYTHON_EXT = {".py", ".pyw"}
+
+
+def unsupported_lang(path):
+    """The language this gate cannot read, else None. JS/TS by name; any other
+    extension that is not Python (a shell or PowerShell harness passed as one of
+    the diff's test files) by extension, so it is named instead of reaching the
+    Python parser, which reported it as an engine crash and stopped the run
+    before the files after it were scanned (#577 Ralph r2 prep). A file with no
+    extension is still tried as Python."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in UNSUPPORTED_LANG:
+        return UNSUPPORTED_LANG[ext]
+    if ext and ext not in PYTHON_EXT:
+        return f"non-Python ({ext})"
+    return None
+MANUAL_SWEEP = (
+    "sst3-test-vacuity: this gate parses Python only, so it proved nothing about the file(s) "
+    "above. Manual sweep for vitest/jest: grep each for expect(<literal>), a bare .toThrow(), "
+    "expect(x) compared with x itself, and an it()/test() block with no expect; record the "
+    "result as could-not-look plus the sweep, never as clean."
+)
+OTHER_LANG_NOTE = (
+    "sst3-test-vacuity: this gate parses Python only, so it proved nothing about the "
+    "non-Python file(s) above. Prove each another way (a shell test by its mutation "
+    "table) and record it as could-not-look, never as clean."
+)
 
 def emit(file, line, kind, detail):
     print(json.dumps({"file": file, "line": line, "kind": kind, "detail": detail}))
@@ -343,6 +391,18 @@ if not files:
     # Explicitly-passed paths are never filtered (the self-test drives
     # the fixtures by explicit path and must keep doing so).
     files = [f for f in files if "test-fixtures/" not in f.replace("\\", "/")]
+    # vitest/jest tests are named whether or not Python tests sit beside them
+    # (c4:T16). Collecting them only in a Python-less tree left a mixed tree's
+    # JS/TS tests unnamed and the run clean (#577 Ralph r1).
+    js = set()
+    for pattern in JS_TEST_GLOBS:
+        js.update(glob.glob(pattern, recursive=True))
+    files += sorted(
+        f for f in js
+        if os.path.splitext(f)[1].lower() in UNSUPPORTED_LANG
+        and "node_modules/" not in f.replace("\\", "/")
+        and "test-fixtures/" not in f.replace("\\", "/")
+    )
 
 doc_text = None
 if count_in is not None:
@@ -353,7 +413,12 @@ if count_in is not None:
         usage_error(f"--count-in doc unreadable: {e}")
 
 scanned = findings = 0
+unsupported = []
 for path in files:
+    lang = unsupported_lang(path)
+    if lang:
+        unsupported.append((path, lang))
+        continue
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             src = fh.read()
@@ -369,6 +434,17 @@ for path in files:
         findings += scan_allowlist(path, tree, count_in, doc_text, threshold)
 
 print(f"sst3-test-vacuity: scanned {scanned} file(s), {findings} finding(s)", file=sys.stderr)
+if unsupported:
+    for path, lang in unsupported:
+        kind = "vitest/jest test file" if lang in UNSUPPORTED_LANG.values() else "test file"
+        print(f"sst3-test-vacuity: UNSUPPORTED LANGUAGE {lang} ({kind}, not scanned): {path}",
+              file=sys.stderr)
+    if any(lang in UNSUPPORTED_LANG.values() for _, lang in unsupported):
+        print(MANUAL_SWEEP, file=sys.stderr)
+    if any(lang not in UNSUPPORTED_LANG.values() for _, lang in unsupported):
+        print(OTHER_LANG_NOTE, file=sys.stderr)
+    # Findings in the Python files that were scanned still block first.
+    sys.exit(1 if findings else 2)
 if scanned == 0:
     # A run that scanned nothing proved nothing — exit 0 here would be the
     # vacuous PASS this very gate exists to reject (#567 Ralph T3 F2: a vacuous

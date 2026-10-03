@@ -28,9 +28,9 @@
 #
 # Consumers: sst3-session-context-injector.sh, sst3-ralph-restart-counter.sh (#568);
 #            sst3-stage-order-gate.sh, sst3-canonical-sync-guard.sh, sst3-stash-guard.sh,
-#            sst3-grep-before-write.sh, _lib-branch-issue.sh (#569 — the five the #568
-#            class sweep found and deliberately left, tracked rather than dropped);
-#            sst3-tier-a-ac-binding-gate.sh (#569 Stage 5 — see the subshell rule below).
+#            _lib-branch-issue.sh (#569 — four of the five the #568 class sweep found and
+#            deliberately left, tracked rather than dropped; #577 removed the fifth);
+#            sst3-destructive-op-guard.sh (#577 AC 1.4 — its merged-branch check runs git).
 #
 # SUBSHELL RULE — read this before deciding a hook is covered transitively.
 # `sst3_scrub_git_env` unsets in the shell that CALLS it. Every helper here and in
@@ -38,11 +38,9 @@
 # SUBSHELL: the unset dies with it and the calling shell keeps its inherited GIT_*. So
 # "hook H sources a lib that scrubs" is NOT coverage. H is covered only if H itself calls
 # sst3_scrub_git_env at TOP LEVEL, before its own first git-derived command.
-# This paragraph replaces a claim added by #569 Phase 1 that sst3-tier-a-ac-binding-gate.sh
-# "gets the scrub without a source line of its own — it has no git call of its own to
-# protect." Both halves were false, and #569 Stage 5 measured it: the scrub was subshell-
-# scoped, and `gh issue view` IS git-derived (gh resolves its repo from the git environment),
-# so the gate read another repository's issue body. It now scrubs at top level, like the rest.
+# (#569 Stage 5 measured the failure: a hook that relied on a lib's subshell-scoped scrub
+# ran `gh issue view` — git-derived, since gh resolves its repo from the git environment —
+# and read another repository's issue body.)
 
 # Each of these can redirect a probe away from `git -C <dir>`; a hook that derives repo
 # identity without clearing them reads whatever repo the PARENT process was in.

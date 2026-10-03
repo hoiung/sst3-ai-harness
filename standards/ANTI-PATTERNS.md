@@ -68,7 +68,7 @@
 **Root Cause**: Duplication, cross-references, manual updates
 
 **Prevention**:
-- ✓ DO: Single source of truth in dotfiles
+- ✓ DO: Single source of truth in dotfiles. Canon prose restating a list that already exists in code (shapes, repos, verdicts) names the authoritative constant instead of copying its members, which rot on the next addition (Issue #54).
 - ✓ DO: Auto-generate docs from working code
 - ✗ DON'T: Duplicate documentation across repos
 - ✗ DON'T: Use cross-references between docs
@@ -145,19 +145,19 @@ if not config_file:
 # merge-base exit 128 on the other, leaving BASE empty; `git diff
 # ""...HEAD` then exits 0 listing NO files, so the loop never runs and
 # the gate reports clean regardless of violations. That is a fail-OPEN
-# gate — the exact defect class this anti-pattern exists to prevent — so
-# an unresolvable base must exit LOUD, never fall through.
+# gate, so an unresolvable base must exit LOUD, never fall through.
+cd "$(git rev-parse --show-toplevel)" || exit 2
 DEF=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/master)
 BASE=$(git merge-base HEAD "$DEF") || {
   echo "check-fallbacks gate: cannot resolve merge-base against $DEF" >&2; exit 2; }
 FAIL=0
-for f in $(git diff --name-only "$BASE"...HEAD -- '*.py'); do
-  [ -f "$f" ] || continue          # skip deletions
+while IFS= read -r -d '' f; do
   python3 $SST3/check-fallbacks.py "$f" --severity error || FAIL=1
-done
+done < <(git diff -z --name-only --diff-filter=d "$BASE"...HEAD -- '*.py')
 exit $FAIL
 
-# Exit 0 = no ERROR-severity fallback introduced by this diff; Exit 1 = one was.
+# Exit 1 = an ERROR-severity fallback in a touched file, pre-existing
+# ones included: fix each, or record why it is a false positive.
 # A whole-tree invocation is NOT usable as a gate: the tree carries a large
 # pre-existing violation baseline, so it exits 1 unconditionally regardless of
 # what the current change did. Diff-scoping is what makes the gate achievable —
@@ -173,7 +173,7 @@ exit $FAIL
 **Evidence**: Unverified agent count propagated across docs as rhetorical framing. Financial figure misquoted as "average" when source said "up to". Both passed review.
 **Root Cause**: "Never Assume — Always Check" enforced for code but not documentation metrics.
 
-**Prevention**: Back every number with a reproducible source (command, query, line ref). Label estimates. Re-verify copied numbers. Maintain provenance (`~/DevProjects/voice-doc-repo/cv-linkedin/METRIC_PROVENANCE.md`).
+**Prevention**: Back every number with a reproducible source (command, query, line ref). Label estimates. Re-verify copied numbers. Maintain provenance (`~/DevProjects/voice-doc-repo/cv-linkedin/METRIC_PROVENANCE.md`). A figure-superseding sweep (grep every surface for the figures a round's fixes replaced) runs after the last content change of the round, never between changes: each fix that moves a count invalidates every citation of it. <!-- c4:T48 --> Copy about a real person or third party ships only what was asked for, and any biographical or behavioural claim about them needs a repo source or the operator's words; this binds every repo, including those whose CLAUDE.md bars the voice guard.
 
 **Self-Healing**: `git blame` origin → verify or remove → update provenance. See STANDARDS.md "Factual Claims Must Have Provenance" + "User Assertion = Immediate Source Verification".
 
@@ -194,7 +194,7 @@ exit $FAIL
 - ✓ DO: Load ALL mandatory-reading files before the first edit. Check every change against every lens in the SAME pass.
 - ✓ DO: Resolve source conflicts EXPLICITLY. Treat new audit output as ADDITIVE, not replacement.
 - ✓ DO: List every consulted file in the commit message.
-- ✓ DO: For config recalibration or contractual-term change: dispatch a dedicated angle that scans ALL YAML/JSON/markdown for the OLD value or OLD issue-number reference — zero hits expected outside intentional historical comment blocks. (Negative-polarity sweep: the old token must be gone everywhere it was load-bearing, not just replaced at the one site you noticed.) ✓ DO — **Doc-describes-code pairs (#555 Phase 4)**: when amending a doc that DESCRIBES a script/artifact you are also modifying (a behaviour-count claim, a production-parity / EXACT-production assertion), grep the artifact's own code for that claim in the SAME pass and re-derive it from source — never edit the doc from memory of the old behaviour.
+- ✓ DO: For config recalibration or contractual-term change: dispatch a dedicated angle that scans ALL YAML/JSON/markdown for the OLD value or OLD issue-number reference — zero hits expected outside intentional historical comment blocks. (Negative-polarity sweep: the old token must be gone everywhere it was load-bearing, not just replaced at the one site you noticed.) ✓ DO — **Doc-describes-code pairs**: when a doc you amend DESCRIBES a script/artifact you are also changing, grep that artifact's code for each behaviour-count or production-parity claim in the SAME pass and re-derive it — never from memory.
 - ✗ DON'T: Read one doc, fix one dimension, ship. Trust one subagent without cross-check. Apply a fix without checking budgets/locked facts/contracts in other docs.
 
 **Self-Healing**: Commit message lists fewer files than mandatory-reading list → revert and redo as single integrated pass.
@@ -211,7 +211,7 @@ exit $FAIL
 **Evidence**: 2026-04-07/08 — new memory files re-documented rules already in `cv_linkedin_project.md`, HIRER_PROFILE.md, or voice-doc-repo SKILL.md (e.g. `feedback_one_target_role_only.md`, deleted as duplicate). Same in code: helpers reimplemented in 3 places, hooks duplicated, subagent prompts copy-pasted with drift.
 
 **Prevention**:
-- ✓ DO: Grep relevant directories with multiple synonyms BEFORE writing. Read index files (MEMORY.md, STANDARDS.md, ANTI-PATTERNS.md, CLAUDE.md) first.
+- ✓ DO: Grep relevant directories with multiple synonyms BEFORE writing. Read index files (MEMORY.md, STANDARDS.md, ANTI-PATTERNS.md, CLAUDE.md) first. The same holds for a shell recipe about to be written into canon prose: grep the repo's own `scripts/` and the harness's `../scripts/` for one that already does it and point at it, instead of inlining a second copy.
 - ✓ DO: Similar exists → UPDATE in place. Genuinely new → name semantically, link from index in same commit. Conflict → reconcile to one canonical, delete duplicate.
 - ✗ DON'T: Skip the search. Copy-paste subagent prompts with minor variations instead of factoring a shared template.
 
@@ -246,7 +246,7 @@ Before flagging any operator identifier that appears in the public `SST3-AI-Harn
 
 **Prevention**:
 - ✓ DO: Log every decision boundary, state transition, and external call AT WRITE TIME (structured key=value or JSON). Metrics on counts/durations/ratios. Append-only audit trail for production/money/user-visible state changes. Treat "no log here" as a code smell.
-- ✓ DO: **Pure-logic modules (classifiers, state machines, decision trees) are subject to the same instrument-at-write-time rule as I/O modules (#516 AC 4.11)** — enumerate all decision boundaries up-front and add a structured log/metric at each in the same commit. A classifier with no logging is equivalent to a silent fallback (AP #7) — every silent branch is a future incident.
+- ✓ DO: Pure-logic modules (classifiers, state machines, decision trees) are not exempt: enumerate their decision boundaries up-front and log each at write time; an unlogged classifier is a silent fallback (AP #7).
 - ✗ DON'T: Empty `except`, bare `pass`, silent `return None`, `continue` on unexpected state. `print()` as logging. Free-text prose in logs. Skip audit trail because "DB has the data" — rows show state, not transition.
 
 **Self-Healing**: Undebuggable incident → instrument FIRST, bugfix second.
@@ -263,7 +263,7 @@ Before flagging any operator identifier that appears in the public `SST3-AI-Harn
 **Evidence**: 2026-04-08 — user said "of course apply", agent skipped the AP #11 false-positive swarm sweep and logged the skip as a "caveat". Rule: "giving green light means follow process" — not bypass it.
 
 **Prevention** (the rule in full): User authorisation NEVER bypasses workflow, process, guardrails, or harnesses. "Proceed" means proceed using the full standard process — never skip verification, sweeps, Ralph review, false-positive check, mandatory reading, or any documented step.
-- ✓ DO: Run the full process — every sweep, every gate. If tempted to skip a step, that's the anti-pattern signal. Treat workflow/guardrails as load-bearing.
+- ✓ DO: Run the full process — every sweep, every gate. If tempted to skip a step, that's the anti-pattern signal. Treat workflow/guardrails as load-bearing. Likewise a repeatedly-blocking gate is reported as a finding, never routed around (dotfiles#552).
 - ✗ DON'T: Compress "go ahead" into "go ahead without the checks". Log a skipped step as a "caveat". Decide unilaterally a step is unnecessary this time.
 
 **Valid exemptions**: (1) step is explicitly inapplicable, (2) user EXPLICITLY names and waives the step (vague approval ≠ waiver), (3) running the step would violate a higher-priority rule → escalate, don't silently skip.
@@ -285,9 +285,9 @@ Before flagging any operator identifier that appears in the public `SST3-AI-Harn
 
 **14d — Scope-gap blindness (Stage 1 research specific)** (Theme 8, #477): Layer-1 Stage 1 swarm covers the named scope but misses scope-adjacent surfaces (genuine gaps) AND/OR cites legacy implementations when modern equivalents already exist (false positives). Single-layer Stage 1 research = systematic blind spot. Failure mode: Issues drafted from incomplete scope, leading to mid-Stage-2 AC rewrites or post-Stage-4 false-positive bug-hunts. Prevention: Stage 1 swarm dispatches a Layer-2 adversarial gap-finder subagent (different prompt than Layer-1) with the explicit task: "Layer-1 found X, Y, Z. Find 3 things they missed — either (a) false-positive claims already covered by modern equivalents, or (b) genuine gaps not yet surfaced." Main agent verifies Layer-2 corrections against source before accepting them (per 14c). Cross-reference: Leader.md Stage 1 step 2a + STANDARDS.md "Stage 1 Layer-2 Adversarial Gap-Finder Discipline".
 
-**14e — Sibling-fix-pattern enumeration discipline (pattern-class extension)** (dotfiles#495 Ralph Tier 3 + Stage 5 L1-G): when the scope of an Issue extends a regex / glob / pattern class across multiple files (e.g. adding `worktree-solo+issue-*` recognition alongside existing `solo/issue-*`), the implementation phase MUST enumerate every site of the class via raw grep AT SCOPE TIME (Stage 1 or Stage 2 latest) and either fix all OR document the intentional non-fix in the same commit. Partial-fix is silent worktree-blindness (or class-blindness) on canonical paths. This is the most-frequent 14d instantiation: 3-of-4-files-updated-symmetrically-1-missed pattern. **Mechanism**: Stage 1 identifies the canonical pattern → runs `grep -rnE '<class-pattern>' SST3/ scripts/ claude/ tests/ .github/ --include='*.py' --include='*.sh' --include='*.yml' --include='*.md'` with synonym sweeps → classifies every match as (a) canonical-aligned, (b) intentionally narrower (with WHY), or (c) BUG (silent class-blindness). Class-(c) hits are in-scope ACs; partial-fix is not an option. Stage 4 Verification Loop re-runs the same enumeration and gates on count-drift (generalisation of AP #24 marker-substring enumeration from string-literals to pattern-classes). Cost: 2-5 minutes grep + triage. Benefit: avoids 1-2 Ralph restart cycles or a Stage 5 fix-phase. Cross-reference: AP #24 (marker-substring enumeration is the same discipline at string-literal granularity), STANDARDS.md "Marker-Substring Discipline" (Leader Stage 1 step 2.1). **Enumeration domains widened (#555 Phase 3 — widen-only, nothing above narrows):** the class-enumeration duty equally covers: sibling render slots; raise-sites one level deep from the changed site; every producer of a cleaned-up state (by concept); every other query site on a shared/filtered table, each classified fixed/exempt in the same pass; every other guard-violation shape; a replaced regex/matcher's FULL output grammar diffed against the old one; every font-weight/CSS-class request path; every workspace manifest / consumer / lockfile / doc site on a dependency removal; every external tool + parse step a fail-closed gate shells out to; and every claim-bearing surface (prose AND table cells) in a self-certification.
+**14e — Sibling-fix-pattern & concept-based enumeration discipline** (dotfiles#495 Ralph Tier 3 + Stage 5 L1-G; dotfiles#516 AC 5.3): when the scope of an Issue extends a regex / glob / pattern class across multiple files (e.g. adding `worktree-solo+issue-*` recognition alongside existing `solo/issue-*`), the implementation phase MUST enumerate every site of the class via raw grep AT SCOPE TIME (Stage 1 or Stage 2 latest) and either fix all OR document the intentional non-fix in the same commit. Partial-fix is silent worktree-blindness (or class-blindness) on canonical paths. This is the most-frequent 14d instantiation: 3-of-4-files-updated-symmetrically-1-missed pattern. **Mechanism**: Stage 1 identifies the canonical pattern → runs `grep -rnE '<class-pattern>' SST3/ scripts/ claude/ tests/ .github/ --include='*.py' --include='*.sh' --include='*.yml' --include='*.md'` with synonym sweeps → classifies every match as (a) canonical-aligned, (b) intentionally narrower (with WHY), or (c) BUG (silent class-blindness). Class-(c) hits are in-scope ACs; partial-fix is not an option. Stage 4 Verification Loop re-runs the same enumeration and gates on count-drift (generalisation of AP #24 marker-substring enumeration from string-literals to pattern-classes). Cost: 2-5 minutes grep + triage. Benefit: avoids 1-2 Ralph restart cycles or a Stage 5 fix-phase. Cross-reference: AP #24 (marker-substring enumeration is the same discipline at string-literal granularity), STANDARDS.md "Marker-Substring Discipline" (Leader Stage 1 step 2.1). **Enumeration domains widened (nothing above narrows):** the duty also covers sibling render slots; raise-sites one level deep; every producer of a cleaned-up state (by concept); every other query site on a shared/filtered table (classify each fixed/exempt in the same pass); every other guard-violation shape; a replaced regex/matcher's FULL output grammar, diffed against the old; every font-weight/CSS-class request path; every workspace manifest/consumer/lockfile/doc site of a removed dependency; every external tool + parse step a fail-closed gate shells out to; every claim-bearing surface (prose AND table cells) in a self-certification.
 
-**14e — Stage 5 angle sub-instruction (operationalisation)** (dotfiles#516 AC 5.3): in Leader.md Stage 1 and Stage 5 angle prompts, every subagent prompt for function-X findings MUST include the sub-instruction: "for any finding about function X, enumerate ALL callers/branches/sibling-files that could share the same defect class before returning verdict — use concept-based grep (extract the concept, grep for it), not literal-pattern grep." A literal-pattern grep finds only the exact spelling you already know; a concept-based grep (decompose the finding into its underlying concept, then grep every synonym/variant of that concept) is what surfaces the sibling site spelled differently. A parked finding with no assigned angle owner is a dropped finding (AP #14c failure mode) — re-assign it to a named angle or close it with evidence, never leave it parked.
+**Stage 5 angle sub-instruction (operationalisation):** in Leader.md Stage 1 and Stage 5 angle prompts, every subagent prompt for function-X findings MUST include the sub-instruction: "for any finding about function X, enumerate ALL callers/branches/sibling-files that could share the same defect class before returning verdict — use concept-based grep (extract the concept, grep for it), not literal-pattern grep." A literal-pattern grep finds only the exact spelling you already know; a concept-based grep (decompose the finding into its underlying concept, then grep every synonym/variant of that concept) is what surfaces the sibling site spelled differently. A parked finding with no assigned angle owner is a dropped finding (AP #14c failure mode) — re-assign it to a named angle or close it with evidence, never leave it parked. <!-- c4:T01 --> **Widened:** the concept sweep covers every absence or completeness claim, not only function-X findings — prior-art search (the Stage-1 prior-art angle IS this sweep), post-edit verify, set enumeration, cross-format propagation, estate-wide sweep: extract the concept and grep its variants before asserting "none", "all" or "every". <!-- c4:T66 --> A retired-identifier sweep adds a data-flow pass over scripts that replay committed run settings into a live run.
 
 **Evidence**: 2026-04-07/08 — Quality DO List deleted on ONE subagent's duplication finding, restored by the false-positive sweep (grounds 14c). **#477 research** — Stage-1 swarm's initial 8-theme scope missed 6 themes (~31-42% gap); a Layer-2 gap-finder (C1) recovered themes 9+10 (grounds 14d). **dotfiles#495** — pattern class `^(?:solo/|worktree-solo\+)issue-(\d+)-` extended across 4 files but missed 2 sites: `sst3-tier-a-auto-tick.py:82 parse_issue_from_branch` (Ralph Tier 3) + the `on.push.branches` trigger in `.github/workflows/tier-a-auto-tick.yml` (Stage 5 L1-G) — two sites in one Issue = 14e; both edited (`35669c1` + `464c6be`). **"Both fixed" was wrong about the second one, and dotfiles#565 measured it: the trigger was written `worktree-solo+issue-*`, and in a GitHub Actions branch filter `+` is a QUANTIFIER, not a literal — so the pattern could never match a branch whose name contains a `+`. 100 of the last 100 runs were the other branch form. It is now `worktree-solo\+issue-*` and has fired.** Two lessons, both worse than the original defect: an edit is not a fix until the fixed path is observed running, and a line-number citation (this one said `:20`; the trigger now sits at `:42`) rots into pointing at unrelated text.
 
@@ -331,11 +331,11 @@ Before flagging any operator identifier that appears in the public `SST3-AI-Harn
 
 **Evidence**: User repeatedly catches this and has to ask "did it work?" / "did you check?" / "what happened?". the operator 2026-04-08: *"you have a tendency to just fire and forget scripts, when what I need you to do is fire and monitor and ensure no problems... we build observability everywhere, we need you to be our eyes and ears, not just our executioner."*
 
-**Why**: Agent treats `subprocess.run()` exit code as the only signal and ignores stdout/stderr / log files / DB state / file creation / side effects. `run_in_background: true` is particularly prone — BashOutput exists to poll but agent forgets to call it.
+**Why**: Agent treats `subprocess.run()` exit code as the only signal and ignores stdout/stderr / log files / DB state / file creation / side effects. `run_in_background: true` is particularly prone — Monitor exists to watch it but agent forgets to use it.
 
 **Prevention**:
 - ✓ DO: Verify every launch end-to-end — tail logs, check exit code, verify expected output, confirm side effects.
-- ✓ DO: Poll `run_in_background` via BashOutput at sensible intervals or set up notification.
+- ✓ DO: Watch `run_in_background` via Monitor or its output file, or await its notification.
 - ✓ DO: Verify commits landed, pushes succeeded, CI started, CI finished.
 - ✓ DO: Report test runs with pass/fail counts, not just "tests ran".
 - ✓ DO: Read subagent output and verify it did what was asked, not assume.
@@ -386,7 +386,7 @@ Phase checkpoints post a comment to the Issue — they DO NOT pause work. Post t
 <!-- stages: 4 -->
 ## Anti-Pattern #18: Smoke-Tested Pipeline Shipped Without End-to-End Sample Run (Workflow-Tier validation)
 
-> Canonical detail: `../standards/stage-4/ap18-workflow-tier.md` (worked evidence + the Sample-Invocation-Validates-Workflow rule, extracted for de-bloat dotfiles#516 AC 6.2). Summary: close a pipeline / backtest / SL1 / SL2 / orchestration / CLI-wiring / cross-module-arg change ONLY after a real end-to-end sample invocation (real DB, real CLI, real downstream consumers); unit + smoke tests are necessary but NOT sufficient. This is the **Workflow Tier** gate (companion: AP #26 E2E/System Tier; STANDARDS.md "Three-Tier Testing Framework").
+> Canonical detail: `../standards/stage-4/ap18-workflow-tier.md` (the Sample-Invocation-Validates-Workflow rule; its worked evidence and per-shape recipe table: `../reference/ap18-workflow-tier-reference.md`). Summary: close a pipeline / backtest / SL1 / SL2 / orchestration / CLI-wiring / cross-module-arg change ONLY after a real end-to-end sample invocation (real DB, real CLI, real downstream consumers); unit + smoke tests are necessary but NOT sufficient. This is the **Workflow Tier** gate (companion: AP #26 E2E/System Tier; STANDARDS.md "Three-Tier Testing Framework").
 
 ---
 
@@ -452,7 +452,7 @@ The manual `mcp__github-checkbox__update_issue_checkbox` invocation is the canon
 1. **Post-commit hook** (`.pre-commit-config.yaml` registers `sst3-tier-a-auto-tick` at the post-commit stage). Fires after every commit. Runs `<your-dotfiles-clone>/SST3/scripts/sst3-tier-a-auto-tick.py` which: (a) parses the commit message's `Phase: 4` trailer + `(#N Phase M ...)` subject; (b) queries the parent Issue body via `gh issue view`; (c) extracts Tier-A `[ ]` boxes in phase M; (d) for each box whose AC text references a file touched by the commit, accumulates an entry into `SST3-metrics/.tier-a-auto-tick/<issue#>-<phase>.json`. Graceful degrade: any failure → exit 0 + stderr log (post-commit MUST NOT block the commit chain).
 2. **GitHub Actions processor** (`.github/workflows/tier-a-auto-tick.yml`). Fires on push to `solo/issue-*` OR `worktree-solo\+issue-*` branches (and on `workflow_dispatch`). **Copy that backslash.** The second pattern is the EnterWorktree-renamed canonical form per the dotfiles#488 Fix-A worktree-first isolation model — `EnterWorktree` substitutes `/` → `+` because git refspecs cannot contain `/` in worktree branch names — and a GitHub Actions branch filter treats a bare `+` as a QUANTIFIER, so the unescaped `worktree-solo+issue-*` this line carried until dotfiles#565 matched NOTHING and the processor no-opped on every Stage-4 commit for the entire life of the worktree isolation model. Without the escaped trigger pattern the GHA processor silently no-ops on every Stage-4 commit in the canonical isolation model (dotfiles#495 Stage 5 L1-G — same class of defect Ralph Tier 3 caught for `parse_issue_from_branch`, but at the workflow layer). For each sentinel: GET the Issue body via `gh api`, regex-replace the unchecked box anchored on `**(<ac_id>)**` with `[x]`, append a Proof of Work line `- PoW [<ac_id>]: <evidence> (auto-ticked via tier-a-auto-tick.yml)`, PATCH the Issue body via `gh api`. Then delete processed sentinels and commit cleanup with `[skip ci]` + `Phase: 4` trailer.
 
-**Manual MCP override remains the AP #20 fallback** when the automation is unavailable (network failure, GHA disabled, sentinel write blocked, AC text drift away from box-text matcher). The Verification Loop Layer 3 + Stage 5 checkbox-coverage audit STILL run regardless — they enforce the 100% Tier A coverage invariant whether automation or manual closed the boxes. Fast-tracking an issue past /Leader 1/2/3 does not exempt it from the AP #20 checkpoint evidence requirement — governance obligation scales with deliverables, not issue size (#516 AC 4.8).
+**Manual MCP override remains the AP #20 fallback** when the automation is unavailable (network failure, GHA disabled, sentinel write blocked, AC text drift away from box-text matcher). The Verification Loop Layer 3 + Stage 5 checkbox-coverage audit STILL run regardless — they enforce the 100% Tier A coverage invariant whether automation or manual closed the boxes.
 
 **Operational notes**:
 - Sentinel JSONs land in the repo (NOT gitignored at the directory level) so the GHA processor can read them on push. The `.gitignore` entry is scoped to `SST3-metrics/.tier-a-auto-tick/.cache/` + `*.tmp` markers only.
@@ -462,7 +462,7 @@ The manual `mcp__github-checkbox__update_issue_checkbox` invocation is the canon
 
 **Canonical invocation points**: `../claude/commands/Leader.md` Guardrails block + `../claude/commands/SST3-solo.md` "Governance Enforcement" section. Rule lives there; this AP documents the failure mode.
 
-**Cadence — two-tier rule (#429 Phase 9 refinement)**:
+**Cadence — two-tier rule**:
 - **Tier A — Phase-deliverable checkboxes** (concrete file edit / commit / function / section / example named in Acceptance Criteria Phase 1..N): **STRICT interleaving required**. Close each with `update_issue_checkbox` + evidence within the same phase's commit window. Cluster-at-end violates AP #20.
 - **Tier B — Cross-cutting meta-checkboxes** (Triple-Check Gate items, Engineering Requirements meta-items, Cleanup Requirements, Verification Loop self-gates, PREREQUISITE CHECKPOINT, Expected Behavior post-conditions): **batched-at-end acceptable**. These describe conditions observable only post-all-phases — closing them mid-phase would be dishonest. Ralph Opus (Tier 3) audits this distinction via `../ralph/opus-review.md` "Governance Drift Audit" classification heuristic.
 
@@ -500,7 +500,7 @@ The manual `mcp__github-checkbox__update_issue_checkbox` invocation is the canon
 
 Bare `cd <path>` without subshell-protection or trailing `cd -` is **prohibited** in any script that has commands following the cd. A `cd -` pattern is fragile (skipped on early-exit / set -e); prefer subshell.
 
-**Enforcement**: `../scripts/check-ap22-cross-repo-cd.sh` (#460 Phase 9 AC 9.7) — pre-commit hook scans canonical script directories for `cd <path> && git ` patterns NOT wrapped in subshell parens; reports the offending file:line. Wired as a pre-commit hook gated on shell + Python script edits (lightweight).
+**Enforcement**: pre-commit hook `../scripts/check-ap22-cross-repo-cd.sh` (on shell/Python script edits) reports by file:line each `cd <path> && git ` in canonical script dirs not wrapped in subshell parens.
 
 **Related**: AP #16 (Fire-and-Forget Script Execution — cd-drift surfaces there as a verification gap); STANDARDS.md / CLAUDE.md branch safety — under the worktree-per-agent canonical (dotfiles#488 Fix-A) each Stage-4 agent works in its own isolated worktree (own working dir + HEAD + index), so "NEVER switch branches" is the *in-worktree* invariant (correct inside an isolated worktree). cd-drift is *more* dangerous under this model, not less: a wrong-repo / wrong-worktree CWD lands `git` work in the wrong isolated tree, defeating the very isolation the worktree provides.
 
@@ -630,7 +630,7 @@ Bare `cd <path>` without subshell-protection or trailing `cd -` is **prohibited*
 
 **The pattern**: shipping an audit capability (a linter, a security/dependency scanner, a coverage gate) as invocable-but-deferred, then treating its mere existence as protection. An unwired lane runs only when someone remembers to call it — so it never runs, and "we have a SEC scanner" becomes false comfort while real findings go unsurfaced.
 
-**Prevention**: a built audit lane is not done until it is wired into a cadence that fires automatically (Ralph tier, pre-commit, pre-push, or CI) AND shape-gated so it skips-clean on surfaces it cannot parse (no vacuous PASS). Deferral is acceptable only as an explicit, operator-authorised tracking item — never as the silent end state.
+**Prevention**: a built audit lane is not done until it is wired into a cadence that fires automatically (Ralph tier, pre-commit, pre-push, or CI) AND shape-gated so it skips-clean on surfaces it cannot parse (no vacuous PASS); where that surface is production code, the skip is reported as could-not-look with its reason, never as a pass (c4:T16). Deferral is acceptable only as an explicit, operator-authorised tracking item — never as the silent end state.
 
 **Enforcement**: STANDARDS.md "Security & Dependency Audit Gate" is the canonical doctrine (shape-gating rule + fail-loud stderr/strict-exit-2 contract + dependabot boundary + which-surface-wires-what). This entry is a pointer only. Companion: AP #18 / AP #26 (test-tier gates).
 
@@ -691,7 +691,7 @@ The worktree row is the one that matters for this framework: CLAUDE.md mandates 
 
 **Prevention**: any hook (or hook-called script) running `git -C <other-repo>` MUST `unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY` (or `env -u` them) before the cross-repo call. **Five variables, not three** (dotfiles#568): the three-variable form documented here until 2026-08-26 misses `GIT_COMMON_DIR`, which overrides `rev-parse --git-common-dir` specifically — the call any repo-identity derivation is built on. #568 shipped the 3-var scrub, had it defeated by `GIT_COMMON_DIR` in the next Ralph round, and only then found that 7 of the 8 hooks probing git identity scrubbed nothing at all. When the probe DERIVES identity (rather than reading a known target), prefer `sst3_scrub_git_env` from `claude/hooks/_lib-repo-identity.sh` over an inline `unset`, so the variable list has one home instead of one per call site — the pattern already used by the wrapper-lane self-test fixtures (`../test-fixtures/*/run.sh`, e.g. `code-review-untested-error/run.sh:30`; 12 fixtures carry it). Test evidence must match the hook class above: a `.git/hooks/*` script is proven by a REAL commit in a scratch repo, a Claude Code hook by an explicit five-variable hostile-env invocation. Either way the proof is by REINTRODUCTION — remove the scrub and confirm the same probe answers about the other repo; a gate that stays green with the defect present is vacuous.
 
-**Enforcement**: Stage-4 implementation rule for any new cross-repo hook; `claude/hooks/tests/test_hook_git_env_scrub.sh` is the class gate, and it DERIVES its family by scanning the hooks directory for files that source `_lib-repo-identity.sh`, so a hook joins the moment it opts in. That gate is the enforcement — this line previously also claimed "Ralph review checks it", which was untrue: no `ralph/*.md` checklist mentions this anti-pattern (verified by grep at dotfiles#569 Stage 5). Origin: Issue #23 (#555 Phase 3); corrected and extended by dotfiles#569.
+**Enforcement**: Stage-4 implementation rule for any new cross-repo hook; `claude/hooks/tests/test_hook_git_env_scrub.sh` is the class gate, and it DERIVES its family by scanning the hooks directory for files that source `_lib-repo-identity.sh`, so a hook joins the moment it opts in. That gate is the only enforcement: no `ralph/*.md` checklist covers this AP (grep-verified, dotfiles#569 Stage 5).
 
 ---
 
@@ -721,7 +721,7 @@ accumulates. Cross-check against the documented gauge for that quantity — for 
 is the injected `SST3 CONTEXT GAUGE:` line, or `/context`; never an ambient counter. Do
 not point this at the statusline: an agent cannot read a terminal, so an instruction to
 consult one is unfollowable by its own audience. And treat an operator instruction as an
-instruction: if a real measurement disagrees, state the reading in one line and comply.
+instruction: if a real measurement disagrees, state the reading in one line and comply. <!-- c4:T23 --> Take a failure's cause from an artefact that records it (log line, exit reason, per-item record), never from an aggregate count.
 Disagreeing with a premise is not a reason to withhold the action.
 
 **Enforcement**: `claude/hooks/sst3-context-gauge-injector.sh` — a `UserPromptSubmit` hook
@@ -740,15 +740,8 @@ STANDARDS.md "Keep Going Until Done" → "Measuring it — `<total_tokens>` is N
 gauge". Origin: dotfiles#568, operator-reported across project-a #1652,
 consumer-private-I #2, and dotfiles.
 
-**The prevention above was shipped as prose ALONE, and that failed (#568 Phase 3).** Two
-days after the rule landed, a session wrote *"CONTEXT WAS NOT LOW (15.0M of 15.0M)"* into
-`~/handover/current-task-consumer-private-L.txt` as a standing order for its successor —
-the same compounding this anti-pattern describes, now committed by an agent that had the
-rule available. The generalisable lesson is about the FIX, not the reading: a rule that
-asks an agent to disregard the only number in front of it is competing with that number on
-every turn and will lose. Supply the correct measurement instead. Whenever a documented
-rule keeps losing to an ambient signal, that is evidence the fix is at the wrong level —
-see also the recurring-shape rule (a defect class that survives its own remedy needs the
+**Prose alone failed:** a rule telling an agent to disregard the only number in front of it loses to that number every turn — supply the correct measurement instead. A documented rule that keeps losing to an ambient signal is evidence the fix is at the wrong level —
+see also the defect-class breaker <!-- c4:T06 --> in `stage-4/ralph-review.md` (a defect class that survives its own remedy needs the
 remedy moved, not repeated).
 
 ---

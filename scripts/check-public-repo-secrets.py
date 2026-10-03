@@ -23,6 +23,7 @@ Usage:
 """
 
 import argparse
+import io
 import json
 import os
 import re
@@ -30,7 +31,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Set
+from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
 try:
     from sst3_utils import (
@@ -458,7 +459,7 @@ SCAN_EXTENSIONS: List[str] = [
     # a *.pem / *.key / *.asc / *.p8 / *.pk8 path evades the scanner entirely by
     # extension, even though the PRIVATE_KEY patterns would match its body
     # (dotfiles#540). Binary key stores (.p12/.pfx/.der/.cer) are intentionally
-    # omitted — is_binary_file null-byte-skips them, so listing them is inert.
+    # omitted — they hold no text the patterns could match.
     # Legitimate committed test-fixture keys are suppressed per-repo via
     # .secret-allowlist, not by excluding the extension.
     # Matching is case-folded at every consumer -- KEY.PEM is key.pem on the
@@ -593,6 +594,31 @@ def _drop_git_ignored(scan_path: Path, candidates: List[Path]) -> List[Path]:
     return [p for p in candidates if resolved[p] not in ignored]
 
 
+def _git_tracked_abspaths(scan_path: Path) -> Set[str]:
+    """Absolute paths of the files git tracks under scan_path (NUL-delimited read).
+
+    A tracked file is published, so the walk never lets IGNORE_PATTERNS drop
+    one. Outside a git repo nothing is tracked, the set is empty and the walk
+    prunes exactly as it always did; a git failure inside a repo is logged.
+    """
+    try:
+        result = subprocess.run(  # sst3-sec: justified: git argv list, the caller's scan path as the -C operand, no shell
+            ["git", "-C", str(scan_path), "ls-files", "-z"],
+            capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log_event("check-public-repo-secrets", "tracked_list_unavailable",
+                  level="warning", reason=type(exc).__name__, detail=str(exc))
+        return set()
+    if result.returncode != 0:
+        log_event("check-public-repo-secrets", "tracked_list_unavailable",
+                  level="warning", reason=f"git exit {result.returncode}",
+                  detail=result.stderr.decode("utf-8", "replace").strip()[:200])
+        return set()
+    return {os.path.abspath(scan_path / os.fsdecode(n))
+            for n in result.stdout.split(b"\0") if n}
+
+
 def is_public_repo(repo_root: Path) -> bool:
     """Check if repo has a .public-repo marker file."""
     return (repo_root / ".public-repo").exists()
@@ -701,14 +727,22 @@ def load_file_set(file_path: Optional[Path]) -> Set[str]:
     return result
 
 
-def is_binary_file(file_path: Path) -> bool:
-    """Detect binary files by checking for null bytes in first 8KB."""
-    try:
-        with open(file_path, "rb") as f:
-            chunk = f.read(8192)
-            return b"\x00" in chunk
-    except OSError:
-        return True
+def decode_for_scan(data: bytes) -> str:
+    """Bytes to text for the pattern scan. Never skips a file.
+
+    This replaced `is_binary_file`, which called a file binary when its first
+    8 KB held a NUL byte, and also when it could not be opened at all, and the
+    caller then skipped it. So one NUL byte hid a whole file, a dangling
+    symlink passed, and a UTF-16 PowerShell script (the Windows PowerShell 5
+    default for Out-File, where every other byte is a NUL) was never read
+    (#577 escalation, class C3 fail-open reader). Every path reaching here
+    already passed should_scan_file's text-type test, so there is nothing
+    binary left to protect. A UTF-16 BOM decodes as UTF-16; anything else as
+    UTF-8 with undecodable bytes replaced, which keeps line numbers intact.
+    """
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8", errors="replace")
 
 
 def is_placeholder_value(value: str) -> bool:
@@ -1087,36 +1121,111 @@ def scan_file(
     pii_allowlist: Set[str],
     public_values: Set[str],
 ) -> List[Finding]:
-    """Scan a single file for secrets. Returns all findings."""
-    findings: List[Finding] = []
+    """Scan a single file for secrets. Returns all findings.
 
+    Raises OSError when the file cannot be read. It used to print a warning
+    and return no findings, so an unreadable file passed; the caller now
+    counts it and fails the run.
+    """
     if is_file_exempt(file_path):
-        return findings
+        return []
+    return scan_text(file_path, decode_for_scan(file_path.read_bytes()),
+                     blocklist, allowlist, pii_allowlist, public_values)
 
-    if is_binary_file(file_path):
-        return findings
 
-    try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            for line_num, line in enumerate(f, start=1):
-                line_findings = scan_line(
-                    line, line_num, file_path, blocklist, allowlist, pii_allowlist,
-                    public_values
-                )
-                findings.extend(line_findings)
-    except OSError as e:
-        print(f"Warning: Could not read {file_path}: {e}", file=sys.stderr)
+def scan_text(
+    file_path: Path,
+    text: str,
+    blocklist: Set[str],
+    allowlist: Set[str],
+    pii_allowlist: Set[str],
+    public_values: Set[str],
+) -> List[Finding]:
+    """Scan already-decoded content attributed to file_path.
 
+    Lines split as a text-mode file read splits them (universal newlines), so
+    line numbers match what the file-based scan always reported.
+    """
+    findings: List[Finding] = []
+    for line_num, line in enumerate(io.StringIO(text, newline=None), start=1):
+        findings.extend(scan_line(
+            line, line_num, file_path, blocklist, allowlist, pii_allowlist,
+            public_values
+        ))
     return findings
 
 
-def get_staged_files_filtered() -> List[str]:
-    """Get staged files with --diff-filter=ACM to exclude deleted files."""
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
-        capture_output=True, text=True, check=True,
-    )
-    return [f for f in result.stdout.strip().split("\n") if f]
+def get_staged_blobs(repo_root: Path) -> List[Tuple[str, bytes]]:
+    """(path, content) for every non-deleted staged entry, read FROM THE INDEX.
+
+    The staged scan used to take `git diff --cached --name-only
+    --diff-filter=ACM` and open each path in the WORKING TREE. That leaked in
+    four ways (#577 escalation, classes C1 and C3):
+    - no -z, so git C-quoted a name holding `"`, `\\` or a non-ASCII byte,
+      the quoted string named no file, and the secret passed;
+    - ACM excluded renames, so a secret moved with `git mv` passed;
+    - the working-tree copy is not what is committed: stage a secret, remove
+      it from the file without re-staging, and the scan saw the clean copy;
+    - a staged symlink was opened through its target, and a dangling one
+      counted as binary and passed.
+    Now the list is -z with renames off (a rename is a delete plus an add,
+    and every non-delete is kept), and each entry's blob comes from the index.
+    A symlink's blob is its target path, which is what the commit publishes.
+    A gitlink (submodule, mode 160000) has no content in this repo.
+
+    Every git call runs from repo_root. `git diff --name-only` prints paths
+    from the top level, but `git ls-files` prints them from the cwd and lists
+    only the cwd's subtree, so run from a subdirectory the two lists never
+    met and a staged secret passed as "0 file(s) scanned" (#577 Ralph r5).
+    A staged name the index does not hold is an error, never a skip.
+    """
+    names = subprocess.run(  # sst3-sec: justified: git with a fixed argument list, no shell
+        ["git", "diff", "--cached", "--name-only", "-z", "--no-renames",
+         "--diff-filter=d"],
+        capture_output=True, check=True, cwd=repo_root,
+    ).stdout
+    wanted = {n for n in names.split(b"\0") if n}
+    if not wanted:
+        return []
+    index = subprocess.run(  # sst3-sec: justified: git with a fixed argument list, no shell
+        ["git", "ls-files", "--stage", "-z"], capture_output=True, check=True,
+        cwd=repo_root,
+    ).stdout
+    entries: List[Tuple[str, str]] = []
+    seen: set = set()
+    for rec in index.split(b"\0"):
+        if not rec:
+            continue
+        meta, _, path = rec.partition(b"\t")
+        mode, oid, _stage = meta.split(b" ")
+        if path in wanted:
+            seen.add(path)
+            if mode != b"160000":
+                entries.append((os.fsdecode(path), oid.decode("ascii")))
+    missing = wanted - seen
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} staged name(s) are not in the index, e.g. "
+            f"{os.fsdecode(sorted(missing)[0])!r}")
+    if not entries:
+        return []
+    batch = subprocess.run(  # sst3-sec: justified: git with a fixed argument list, no shell
+        ["git", "cat-file", "--batch"],
+        input="".join(f"{oid}\n" for _, oid in entries).encode("ascii"),
+        capture_output=True, check=True, cwd=repo_root,
+    ).stdout
+    blobs: List[Tuple[str, bytes]] = []
+    pos = 0
+    for path, oid in entries:
+        header_end = batch.index(b"\n", pos)
+        header = batch[pos:header_end].split(b" ")
+        if len(header) != 3 or header[1] != b"blob":
+            raise RuntimeError(f"git cat-file gave {header!r} for {path} ({oid})")
+        size = int(header[2])
+        start = header_end + 1
+        blobs.append((path, batch[start:start + size]))
+        pos = start + size + 1
+    return blobs
 
 
 def report_findings(
@@ -1570,16 +1679,25 @@ def main() -> int:
         print(f"PASS: No secrets detected in {len(commits)} commit message(s) since {args.since[:12]}")
         return 0
 
-    # Collect files to scan
+    # Collect what to scan: (display path, content bytes or None = read the file).
+    #
+    # IGNORE_PATTERNS prunes only a FILESYSTEM walk, where a developer clone
+    # holds untracked dependency and build trees (node_modules/, .venv/,
+    # dist/). It used to be applied to the staged list and to an explicitly
+    # named file too, so a secret committed under archive/, build/, dist/ or
+    # venv/ passed with "1 file(s) scanned" (#577 escalation, class C4
+    # walk-then-filter). What a commit stages, what a caller names, and what
+    # git tracks all go public, so none of them is ever pruned.
+    targets: List[Tuple[Path, Optional[bytes]]]
     if args.staged_only:
         try:
-            staged = get_staged_files_filtered()
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            print(f"Error: Could not get staged files: {e}", file=sys.stderr)
+            staged = get_staged_blobs(repo_root)
+        except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, ValueError) as e:
+            print(f"Error: Could not read the staged content: {e}", file=sys.stderr)
             return 1
-        files_to_scan = [repo_root / f for f in staged if should_scan_file(Path(f))]
+        targets = [(repo_root / p, data) for p, data in staged if should_scan_file(Path(p))]
     elif scan_path.is_file():
-        files_to_scan = [scan_path]
+        targets = [(scan_path, None)]
     else:
         # Walked inline rather than through the shared sst3_utils
         # `collect_source_files`: that helper's matching contract is an
@@ -1588,11 +1706,13 @@ def main() -> int:
         # membership through should_scan_file is what keeps the directory walk
         # and the staged-only path on ONE matcher. `should_ignore_path` — the
         # other shared helper — is still reused as-is.
+        tracked = _git_tracked_abspaths(scan_path)
         files_to_scan = sorted(
             p for p in scan_path.rglob("*")
             if p.is_file()
             and should_scan_file(p)
-            and not should_ignore_path(p, IGNORE_PATTERNS)
+            and (not should_ignore_path(p, IGNORE_PATTERNS)
+                 or os.path.abspath(p) in tracked)
         )
         # Drop files git already ignores. A directory scan walks the FILESYSTEM,
         # so on a developer clone it reaches the very files secrets are supposed
@@ -1611,32 +1731,52 @@ def main() -> int:
         # the public, cannot be scanned at all without this flag.
         if not args.include_ignored:
             files_to_scan = _drop_git_ignored(scan_path, files_to_scan)
+        targets = [(p, None) for p in files_to_scan]
 
-    # Scan. The directory-walk branch above already applied should_ignore_path
-    # inline; the staged-only and single-file paths did not, so they need it here.
+    # Scan. An unreadable target is counted and fails the run below: it used to
+    # count as binary (or print a warning) and pass.
     all_findings: Dict[Path, List[Finding]] = {}
-    needs_ignore_check = args.staged_only or scan_path.is_file()
-    for file_path in files_to_scan:
-        if needs_ignore_check and should_ignore_path(file_path, IGNORE_PATTERNS):
+    unreadable: List[str] = []
+    scanned = 0
+    for file_path, data in targets:
+        if is_file_exempt(file_path):
             continue
-        findings = scan_file(file_path, blocklist, allowlist, pii_allowlist, public_values)
+        try:
+            if data is None:
+                findings = scan_file(file_path, blocklist, allowlist, pii_allowlist, public_values)
+            else:
+                findings = scan_text(file_path, decode_for_scan(data), blocklist,
+                                     allowlist, pii_allowlist, public_values)
+        except OSError as e:
+            unreadable.append(f"{file_path}: {e.strerror or e}")
+            continue
+        scanned += 1
         if findings:
             all_findings[file_path] = findings
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
     # Report
+    if unreadable:
+        print(f"[FAIL] [could-not-scan] check-public-repo-secrets: {len(unreadable)} "
+              f"file(s) could not be read, so they were not scanned:", file=sys.stderr)
+        for entry in unreadable:
+            print(f"  {entry}", file=sys.stderr)
+        log_event("check-public-repo-secrets", "unreadable_files", level="error",
+                  files_scanned=scanned, unreadable=len(unreadable), duration_ms=duration_ms)
     if all_findings:
         total = report_findings(all_findings, scan_path.resolve(), args.show_evidence)
         log_event(
             "check-public-repo-secrets",
             "violations_found",
             level="error",
-            files_scanned=len(files_to_scan),
+            files_scanned=scanned,
             violations=total,
             duration_ms=duration_ms,
         )
         return 1
+    if unreadable:
+        return 2
 
     # COVERAGE FLOOR. Everything above asserts an absence, and an absence over an
     # empty file set is true for free. A whole-repo scan that collected nothing
@@ -1647,7 +1787,7 @@ def main() -> int:
     # does not scan (an image, a lockfile) legitimately stages zero candidates, and
     # failing there would train people to bypass the hook, which costs more than it
     # buys. The count is still printed so the zero is visible rather than implied.
-    if not files_to_scan and not args.staged_only:
+    if not targets and not args.staged_only:
         print(
             f"[FAIL] [vacuous-gate] check-public-repo-secrets: collected 0 scannable "
             f"files under {scan_path.resolve()}, so 'no secrets detected' was true of "
@@ -1656,7 +1796,7 @@ def main() -> int:
         )
         return 2
 
-    print(f"PASS: No secrets detected ({len(files_to_scan)} file(s) scanned)")
+    print(f"PASS: No secrets detected ({scanned} file(s) scanned)")
     return 0
 
 

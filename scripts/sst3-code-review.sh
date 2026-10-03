@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # sst3-code-review.sh — Composite diff-scoped review (replaces 4MB-JSON monolith).
 #
-# Usage:   sst3-code-review.sh <base-branch>
-# Example: sst3-code-review.sh main
+# Usage:   sst3-code-review.sh <base-ref>
+# Example: sst3-code-review.sh origin/main   (a fetched remote ref — a stale local
+#          branch ref silently widens the BASE...HEAD diff)
 # Output:  path to a per-invocation NDJSON file echoed on stdout; default
 #          `mktemp -t sst3_review.XXXXXX.ndjson`, override via SST3_REVIEW_NDJSON.
 #          The file chains:

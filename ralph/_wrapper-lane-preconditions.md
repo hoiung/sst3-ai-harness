@@ -2,9 +2,13 @@
 
 > Canonical block for the wrapper-lane preconditions paragraph that haiku/sonnet/opus all need. Each tier file points here instead of duplicating the text.
 
+## Script path (every tier, every `$SST3` command)
+
+Every `bash $SST3/<script>` in the tier checklists is resolved in the same shell call by `SST3=$( [ -f scripts/load-stage-rules.sh ] && echo scripts/ || echo "<your-dotfiles-clone>/scripts/" )` (the Leader.md Guardrails resolver). Every tier runs in the repo under review, often a consumer repo or its worktree: a bare scripts/ path exits 127 there, and ../dotfiles/SST3/ exits 127 from any worktree (c4:T68).
+
 ## Preconditions (code-touching PRs, run once per review)
 
-`bash scripts/sst3-code-status.sh` exits 0 and emits valid JSON `{last_updated, file_count, source_languages}`. The wrapper-lane is stateless — there is no staleness check; every query re-parses on disk. If the wrapper exits non-zero (missing inner engine), skip to the per-tier fallback clause (see [`_fallback-clause.md`](_fallback-clause.md)).
+`bash $SST3/sst3-code-status.sh` exits 0 and emits valid JSON `{last_updated, file_count, source_languages}`. The wrapper-lane is stateless — there is no staleness check; every query re-parses on disk. If the wrapper exits non-zero (missing inner engine), skip to the per-tier fallback clause (see [`_fallback-clause.md`](_fallback-clause.md)).
 
 **Exit 127 semantics (post Issue #456)**: means the engine is **genuinely missing on disk** (npm/cargo/pipx install never ran). Pre-#456 the same code ALSO fired when the engine was on disk but PATH was not propagated to non-interactive shells; that PATH-propagation gap is now closed by `../scripts/sst3-bash-utils.sh` self-bootstrap. Run `<your-dotfiles-clone>/scripts/install.sh` to install missing engines — do NOT add custom PATH workarounds in the calling agent.
 

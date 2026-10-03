@@ -38,35 +38,9 @@ Canonical telemetry mechanism for the SST3 5-stage `/Leader` workflow. Each `/Le
 - `rule_self_caught` — agent-self-caught violations of an existing canonical rule
 - `rule_user_caught` — user-caught corrections (attribution wording is FINE — see channel-separation rule)
 
-**`caught_by:` enum** (sub-attribute on findings inside `worked` / `didnt`): `wrapper / raw / haiku / sonnet / opus / user / agent-self`. Lets the aggregator answer queries like "how often did raw-only Layer 2 catch what wrapper missed".
+**`caught_by:` enum** (sub-attribute on findings inside `worked` / `didnt`, written as a `- caught_by:` sub-bullet): `wrapper / raw / haiku / sonnet / opus / fable / swarm / gate / user / agent-self` — `swarm` = a multi-agent layer (Workflow legs, a subagent swarm, the Ralph trio) or more than one catcher; `gate` = a mechanical check (hook, verify command, script). `feedback_parser.py` maps known synonyms (`CAUGHT_BY_SYNONYMS`) and rejects any other value; an empty value is absent (`null` in the index). Lets the aggregator answer queries like "how often did raw-only Layer 2 catch what wrapper missed".
 
-**`improvement_status` enum**: `pending / applied / partial / superseded / rejected`. When status moves to `applied` or `partial`, set `applied_in: <issue#>`. Closure loop: future Stage 1 Step 0 picks up `pending` improvements from prior issues + marks them `applied` (or `partial` for multi-bullet improvements) when the next run satisfies them.
-
-<!-- stages: 1,5 -->
-### Closure-loop formats (Stage-1 ground / Stage-5 byte-match)
-
-> Tagged `stages: 1,5` (#555 AC 2.4): these formats are written at Stage-1 step 0b
-> (closure-loop pickup) and byte-matched at Stage 5 — `mark-improvements-applied.sh`
-> emits them mechanically, so the Stage-4 implementer never hand-writes the format.
-
-**Closure-loop content-match format (#460 Phase 5)**: Stage 1 closure-loop entries MUST quote the first 80 chars of the source improvement field verbatim so Stage 5 can byte-match without ambiguity:
-
-```
-<repo>#<issue> stage=<N> [bullet=<i>]: "<first 80 chars verbatim>" → <applied-where>
-```
-
-The `[bullet=<i>]` qualifier is REQUIRED for multi-bullet improvement fields (1-indexed), OPTIONAL when the entire improvement is a single bullet. The byte-match rule is: take the first 80 chars of the improvement bullet (after `**improvement**:` or `- ` bullet prefix), strip leading/trailing whitespace, that's the canonical key.
-
-**Multi-bullet partial-application schema**: when only a subset of bullets in a multi-bullet improvement field is applied this run, mark per-bullet rather than per-improvement:
-
-```
-**improvement_status**: partial
-**applied_in_bullets**: [1, 3]
-**carry_forward_bullets**: [2]
-**applied_in**: <issue-number>
-```
-
-Inline per-bullet markers go AFTER the bullet text using HTML comments — e.g. ``- **template-vs-mirror lane mapping** ...<!-- applied_in: 459 -->``. The aggregator and `check-closure-loop-applied.py` (Phase 6) parse these markers via `feedback_parser.py`; the parser emits `applied_in_bullets` + `carry_forward_bullets` into the NDJSON index for cross-issue reporting.
+**`improvement_status` enum**: `pending / applied / partial / superseded / rejected`. When status moves to `applied` or `partial`, set `applied_in: <issue#>`. Closure loop: future Stage 1 Step 0 picks up `pending` improvements from prior issues + marks them `applied` (or `partial` for multi-bullet improvements) when the next run satisfies them. <!-- c4:T52 --> A batch of status flips re-checks every reference between the flipped rows against the post-batch corpus, not the pre-batch snapshot.
 
 <!-- stages: 4 -->
 ### Write mechanics and enforcement (Stage-4 operative)
@@ -99,10 +73,10 @@ Inline per-bullet markers go AFTER the bullet text using HTML comments — e.g. 
 
 **Auto-archive**: after 90 days of inactivity, records auto-archive to a `_archive/` subfolder.
 
-**Index**: `feedback-index.ndjson` regenerated post-commit (incremental — mtime-vs-files check; full rebuild via `--rebuild`). Queryable via `<your-dotfiles-clone>/SST3/scripts/leader-feedback-aggregate.sh --summarize | --report | --shape-match | --staleness`.
+**Index**: `feedback-index.ndjson` regenerated post-commit (incremental — input-hash check; full rebuild via `--rebuild`). Queryable via `<your-dotfiles-clone>/SST3/scripts/leader-feedback-aggregate.sh --summarize | --report | --shape-match | --staleness`.
 
 **Enforcement (3 layers)**:
-- **Layer A**: pre-commit hook `sst3-metrics-feedback-present` (compact-resilient — survives context loss). Bypass: `SKIP=sst3-metrics-feedback-present git commit ...` — an INTENDED path for non-code artifact commits on a solo branch (the metrics-feedback lane itself, e.g. committing the feedback file or aggregator output), not only emergencies (#555 Phase 3); reach for it up front on that lane rather than discovering it empirically. Any other use stays emergency-class with an in-message justification. The lenient-stub/strict-close-gate distinction is canonical HERE — Leader.md Stage-4 step 1 Stub-first points at it and no other placeholder-stub instruction exists (swept #555).
+- **Layer A**: pre-commit hook `sst3-metrics-feedback-present` (compact-resilient — survives context loss). Bypass: `SKIP=sst3-metrics-feedback-present git commit ...` — an INTENDED path for non-code artifact commits on a solo branch's metrics-feedback lane (e.g. the feedback file, aggregator output); use it up front there. Other uses stay emergency-class, justified in-message. The lenient-stub/strict-close-gate distinction is canonical HERE — Leader.md Stage-4 step 1 Stub-first points at it and no other placeholder-stub instruction exists (swept #555). The aggregator applies the same split per file wherever it validates: while `stages_logged` lacks 5, a failed strict validate retries with `--allow-placeholder` and a stderr WARNING names the file; once it logs 5, placeholders fail hard.
 - **Layer B**: persistent sentinel files in the gitignored `.sentinels/` subfolder catch Stages 1+2 (which don't produce commits). Auto-release after 24h staleness so compact-resume cycles can re-acquire. Layer B sentinels also catch compact-before-commit gaps — if `/Leader N` completes work that gets compacted before the per-stage feedback commit lands, the `.sentinels/` marker survives compaction and is detected at next session start, so the post-compact agent sees the unflushed feedback rather than silently bypassing it (#498 F-22).
 - **Layer C**: skill-body sign-off line in `../claude/commands/Leader.md` for each of the 5 stages — the redundant-by-design third layer (AP #20 case proved skill-body alone leaks).
 
@@ -113,25 +87,23 @@ Inline per-bullet markers go AFTER the bullet text using HTML comments — e.g. 
 **Canonical scope boundary**: this section is THE canonical source for what / how / why feedback records exist. `../claude/commands/Leader.md` SIGN-OFF lines reference this section for the per-stage write step. `../claude/commands/SST3-solo.md` references this section at Per-Session Initialization and Verification Loop. `../../workflow/WORKFLOW.md` references this section in each stage trailer. `../dotfiles/CLAUDE.md` is the single place where the literal `SST3-metrics/leader-feedback/...` storage path lives — the workflow files are mirrored to public repos and use this section reference only.
 
 <!-- stages: always -->
-### Cross-Repo Cohabitation Protocol (#469 Phase 4 — closes dotfiles#449 stage=5)
+### Cross-Repo Cohabitation Protocol
 
-> **Canonical: stage-4/cohabitation-protocol.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Concurrency summary: `cohabitation-protocol.md`.
 
-When a sister repo's `/Leader` run writes feedback that references both the sister repo's work AND a dotfiles-side artefact change, both repos may end up needing entries in their own canonical paths but only ONE can be merged at a time (due to branch-safety rule "NEVER switch branches"). The 4-step cohabitation protocol:
+A sister-repo `/Leader` run whose feedback also covers a dotfiles-side artefact change may need entries at both repos' canonical paths, but only ONE can merge at a time ("NEVER switch branches"):
 
-1. **Active-branch minimal marker**: while on the sister repo's solo branch, write a minimal one-line marker file at `SST3-metrics/leader-feedback/feedback-<sister-repo>-<issue>.md` containing only the FM block + a placeholder `[parked: full block at /tmp/feedback-<sister-repo>-<issue>-stage-N.md awaiting cross-repo apply post-merge]` body. Stages 1-2 placeholders rather than full blocks because the active sister-repo `/Leader` session is committing to its own clone's worktree and a CONCURRENT cross-repo dotfiles commit from inside that same chat session would risk a CONTENDED working-tree mutation if it required a shared-tree branch-switch. Post-dotfiles#488 worktree-first the operator MAY parallel-EnterWorktree into the dotfiles clone to commit fully — Cohabitation governs CONTENDED concurrent mutations of the SAME working tree, NOT parallel mutations across ISOLATED worktrees (see `[[feedback-cohabitation-applies-to-contended-clone-mutations-not-cross-repo-commits]]`).
-2. **Sister parked full block**: stage the FULL stage block to `/tmp/feedback-<sister-repo>-<issue>-stage-N.md`. This is the data-of-record until applied.
-3. **Sign-off comment with apply commands**: at /Leader 5 sign-off, post the apply commands as a comment on the sister-repo Issue: `cp /tmp/feedback-<sister-repo>-<issue>-stage-N.md $DOTFILES_ROOT/SST3-metrics/leader-feedback/feedback-<sister-repo>-<issue>.md && cd $DOTFILES_ROOT && git add -f SST3-metrics/leader-feedback/feedback-<sister-repo>-<issue>.md && git commit -m "metrics(feedback): apply parked block from <sister-repo>#<issue> (Phase: 5)"`. The `-f` is the dotfiles#488 AC 4.1 forced-promotion contract: a promoted block may originate from the now-gitignored `_drafts/` staging subdir, so the apply MUST force-add it into tracking; `-f` is a harmless no-op on the non-ignored canonical root path, kept identical to the `sweep-parked-feedback.sh` suggested-apply for single-source consistency (AP #9).
-4. **Post-merge sweep enforcement**: `bash $SST3/sweep-parked-feedback.sh <issue> [--repo <sister-repo>]` invoked at Stage 5 step 7a.0 (per Leader.md) BLOCKs sign-off if any `/tmp/feedback-<sister-repo>-<issue>*.md` file remains. Operator MUST apply the full block before sign-off proceeds. The completeness-check C15 enforces server-side via the Layer B GitHub Actions workflow.
+1. **Active-branch minimal marker**: on the sister repo's solo branch, write `SST3-metrics/leader-feedback/feedback-<sister-repo>-<issue>.md` with only the FM block + the body `[parked: full block at /tmp/feedback-<sister-repo>-<issue>-stage-N.md awaiting cross-repo apply post-merge]`. Stages 1-2 write this placeholder, not the full block, since a same-session cross-repo dotfiles commit needing a shared-tree branch-switch risks a CONTENDED mutation; the operator MAY instead parallel-EnterWorktree into the dotfiles clone and commit fully (isolated worktrees are not CONTENDED).
+2. **Sister parked full block**: stage the FULL stage block to `/tmp/feedback-<sister-repo>-<issue>-stage-N.md` — the data-of-record until applied.
+3. **Sign-off comment with apply commands**: at /Leader 5 sign-off, comment the apply commands on the sister-repo Issue: `cp /tmp/feedback-<sister-repo>-<issue>-stage-N.md $DOTFILES_ROOT/SST3-metrics/leader-feedback/feedback-<sister-repo>-<issue>.md && cd $DOTFILES_ROOT && git add -f SST3-metrics/leader-feedback/feedback-<sister-repo>-<issue>.md && git commit -m "metrics(feedback): apply parked block from <sister-repo>#<issue> (Phase: 5)"`. The `-f` is required: a block promoted from the gitignored `_drafts/` MUST be force-added; at the canonical root it is a no-op, kept so the command matches the `sweep-parked-feedback.sh` suggested-apply (AP #9).
+4. **Post-merge sweep enforcement**: at Stage 5 step 7a.0, `bash $SST3/sweep-parked-feedback.sh <issue> [--repo <sister-repo>]` BLOCKs sign-off while any `/tmp/feedback-<sister-repo>-<issue>*.md` remains; the operator MUST apply the full block first. Completeness-check C15 enforces server-side (Layer B GHA).
 
-**TBD-issue staging via `_drafts/` subdir**: pre-issue feedback (work where the GitHub Issue hasn't been assigned yet) goes to `SST3-metrics/leader-feedback/_drafts/feedback-<repo>-<topic>-pre-issue.md`. The `_drafts/` subdir is **gitignored + git-untracked** (dotfiles#488 Fix-D / AC 4.1) so a parallel agent's in-flight pre-issue draft is never swept into a bystander's commit during Stages 1-3. Aggregator's non-recursive glob `feedback-*.md` excludes `_drafts/` automatically — no parser regex change needed. When the Issue is assigned, promote with a plain `mv` then a **forced** add (the `_drafts/` source is untracked/ignored, so a `git mv` of a non-tracked entry is not available): `mv _drafts/feedback-<repo>-<topic>-pre-issue.md feedback-<repo>-<issue>.md && git add -f feedback-<repo>-<issue>.md` + update FM `issue:` field. The `git add -f` is required (not optional polish) so the promoted file enters tracking and the Stage-5 `sweep-parked-feedback.sh` BLOCK + completeness-check C15 still see it. Pattern matches Jekyll/Hugo `_drafts/` precedent.
-
-**Aggregator self-validates per-file** (#469 Phase 1 hook-order fix): `leader-feedback-aggregate.sh` calls `validate_record()` per-file BEFORE `--emit-ndjson` parse — single point of enforcement at the aggregator boundary, eliminating the pre-commit hook-order timing window without touching `.pre-commit-config.yaml`. Belt-and-braces with the parser's strict-mode emit-ndjson which validates at the CLI layer too.
+**TBD-issue staging via `_drafts/` subdir**: pre-issue feedback goes to `SST3-metrics/leader-feedback/_drafts/feedback-<repo>-<topic>-pre-issue.md`, **gitignored + git-untracked** so a parallel agent's draft is never swept into a bystander's commit during Stages 1-3; the aggregator's non-recursive `feedback-*.md` glob skips it. On Issue assignment: `mv _drafts/feedback-<repo>-<topic>-pre-issue.md feedback-<repo>-<issue>.md && git add -f feedback-<repo>-<issue>.md` + update FM `issue:`; the forced add is required so the file enters tracking and the Stage-5 `sweep-parked-feedback.sh` BLOCK + C15 still see it.
 
 <!-- stages: 4 -->
 ### Multi-Agent Multi-Worktree Concurrency Contract
 
-> **Canonical: stage-4/cohabitation-protocol.md** — physical extract per dotfiles#498 AC 4.1+4.2; this section retains the cross-reference anchor while the consolidated source-of-truth lives in the linked extract.
+> Concurrency summary: `cohabitation-protocol.md`.
 
 **Principle** (dotfiles#495 / dotfiles#488 worktree-first canonical): the SST3 harness supports multiple agents working in parallel via EnterWorktree-isolated worktrees on the same clone, provided each agent operates on its own solo branch in its own worktree. This section is the explicit scope contract.
 
@@ -157,7 +129,7 @@ When a sister repo's `/Leader` run writes feedback that references both the sist
 - Worktree-first canonical rule: CLAUDE.md "Branch Safety (CRITICAL — DO NOT VIOLATE)" anchor
 - Merge mechanic: STANDARDS.md `### Solo Branch Merge Safety` section
 - Cleanup mechanic: STANDARDS.md `**Branch and Worktree Cleanup**` section
-- Cohabitation distinction: STANDARDS.md `### Cross-Repo Cohabitation Protocol` section
+- Cohabitation distinction: this file's `### Cross-Repo Cohabitation Protocol` section
 
 <!-- stages: 4 -->
 ### Canonical field-line format vs Banned legacy formats
@@ -172,6 +144,6 @@ The parser strictly requires `**field**:` bare bold form. Banned legacy formats 
 | `- field: \|<br>    indented value` | Banned (YAML literal block) | (multi-line legacy) |
 | `## Field` (H2 section) | Banned (header-as-field) | `## Model` |
 
-Continuation lines for multi-line values: bare bullets at column 0, no leading `- ` prefix on the field line itself. Migration scripts for the banned forms live transient in `/tmp/` for one-shot use; canonical pattern is to enforce via parser strict mode + per-file validate at aggregator boundary, not retroactive correction.
+Continuation lines for multi-line values: bare bullets at column 0, no leading `- ` prefix on the field line itself. Migration scripts for the banned forms live transient in `/tmp/` for one-shot use; canonical pattern is to enforce via parser strict mode + per-file validate at aggregator boundary (`leader-feedback-aggregate.sh` calls `validate_record()` per file BEFORE its `--emit-ndjson` parse, closing the pre-commit hook-order window without a `.pre-commit-config.yaml` change), not retroactive correction.
 
-**Codepath-split note** (#469 Phase 3): both `parse_record()` (`--emit-ndjson`) and `validate_record()` (default + aggregator) now run validate-first, so CLI and Python-module consumers see identical strictness — cures the lax-path silent-skip class (missing FM fields / wrong heading levels emitted 0 NDJSON lines pre-fix).
+**Codepath-split note**: `parse_record()` (`--emit-ndjson`) and `validate_record()` (default + aggregator) both validate first, so CLI and Python-module consumers see identical strictness (no lax-path silent skip).

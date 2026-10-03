@@ -1,5 +1,5 @@
 <!-- stages: 4 -->
-# Gate 2 — Recursion-Safe Remote Fast-Forward Merge (#498 AC 4.1)
+# Gate 2 — Recursion-Safe Remote Fast-Forward Merge
 
 Stage-4 merge gate. Replaces the pre-#488 shared-tree branch-switch + pull + local-merge + push chain with a worktree-isolated remote FF push that touches NO shared working tree.
 
@@ -33,4 +33,4 @@ This is the dotfiles#488 chokepoint. The shared-clone branch-switch class moves 
 - `.claude/commands/Leader.md` Stage 4 Gate 2 — operator-facing procedure.
 - `CLAUDE.md` "Branch Safety (CRITICAL — DO NOT VIOLATE)" — the prose-level invariant.
 - `claude/hooks/sst3-branch-guard.sh` — runtime backstop (dotfiles#490).
-- `claude/hooks/sst3-destructive-op-guard.sh` — DENY mode on `--force` / `--force-with-lease` / `filter-repo` / `reset --hard` / `branch -D` (#498 F-4).
+- `claude/hooks/sst3-destructive-op-guard.sh` — DENY mode on `--force` / `--force-with-lease` / `filter-repo` / `reset --hard` / `branch -D` (#498 F-4). One exception (#577 AC 1.4): a single plain `git branch -D <name>` passes when `refs/heads/<name>` is an ancestor of `origin/HEAD` in the repo the payload's cwd names; several names, a `-C` / `--git-dir` / `--work-tree` / `cd` prefix, or a failed check stay DENY.

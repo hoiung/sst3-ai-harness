@@ -256,7 +256,7 @@ run_M6() {
         SRC_LANG=$(infer_lang "$FILE")
         # Cheap heuristic: only emit when the line contains a SQL keyword
         # to filter out comments / variable names / unrelated mentions.
-        if printf '%s' "$TEXT" | grep -Eqi '\b(FROM|JOIN|INSERT INTO|UPDATE|DELETE FROM|TABLE)\b'; then
+        if grep -Eqi '\b(FROM|JOIN|INSERT INTO|UPDATE|DELETE FROM|TABLE)\b' <<<"$TEXT"; then
             emit_edge "M6" "$FILE" "$LN" "$SRC_LANG" "sql-caller" \
                 "$SYMBOL" 0 "sql" "table" \
                 "$SYMBOL" "high" "SQL table reference (FROM/JOIN/INSERT/UPDATE/DELETE)"

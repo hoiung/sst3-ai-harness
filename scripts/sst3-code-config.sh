@@ -61,9 +61,7 @@ if [[ -n "$PATHS_FROM" ]]; then
         echo "ERROR: --paths-from file not readable: $PATHS_FROM" >&2
         exit 64
     fi
-    while IFS= read -r p; do
-        [[ -n "$p" ]] && ALLOWED_PATHS+=("$p")
-    done < <(read_paths_from "$PATHS_FROM")
+    load_paths_from "$PATHS_FROM" ALLOWED_PATHS
 fi
 path_allowed() {
     local file="$1"

@@ -371,18 +371,22 @@ usable as a gate: the tree carries a pre-existing violation baseline, so it
 exits 1 regardless of what the current change did. Resolve the default
 branch from origin/HEAD (it differs by repo) and exit loud if it cannot be
 resolved — an empty base makes git diff list no files, which would pass the
-gate silently. Run it from the REPO ROOT: `git diff --name-only` emits
-repo-root-relative paths, so a copy invoking a bare `check-fallbacks.py`
-from SST3/scripts would have `[ -f "$f" ]` discard every path and exit 0
-having scanned nothing — the same fail-OPEN this block warns about.
+gate silently. It changes to the repo top level first: git reads the
+'*.py' pathspec relative to the current directory, so from a subdirectory
+the list was empty and the gate passed having scanned nothing. Names are
+read NUL-delimited: `for f in $(git diff --name-only ...)` split a name at
+a space and git C-quoted one holding a quote or a non-ASCII byte, and the
+old `[ -f "$f" ] || continue` then skipped the pieces, so such a file was
+never scanned (#577 escalation, class C1). Deletions are left out by
+--diff-filter=d instead of by that skip.
+  cd "$(git rev-parse --show-toplevel)" || exit 2
   DEF=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/master)
   BASE=$(git merge-base HEAD "$DEF") || {
     echo "check-fallbacks gate: cannot resolve merge-base against $DEF" >&2; exit 2; }
   FAIL=0
-  for f in $(git diff --name-only "$BASE"...HEAD -- '*.py'); do
-    [ -f "$f" ] || continue
+  while IFS= read -r -d '' f; do
     python3 scripts/check-fallbacks.py "$f" --severity error || FAIL=1
-  done
+  done < <(git diff -z --name-only --diff-filter=d "$BASE"...HEAD -- '*.py')
   exit $FAIL
 
 Allowlist format (.fallback-allowlist):

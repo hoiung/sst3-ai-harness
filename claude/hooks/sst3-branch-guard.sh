@@ -14,7 +14,9 @@
 #       core principle. This hook is that runtime backstop.
 #
 # MODE  (AC4 — no hardcode) env var SST3_BRANCH_GUARD_MODE:
-#         WARN  default, shipped — exit 0 + {"systemMessage":…}; command STILL
+#         WARN  default, shipped — exit 0 + systemMessage (operator) AND
+#               hookSpecificOutput.additionalContext (agent — dotfiles#577 AC 1.2;
+#               the systemMessage alone never reached the agent); command STILL
 #               RUNS (advisory; surfaces false positives before it can block).
 #         DENY  operator-gated flip — exit 2 + stderr; command BLOCKED.
 #       An exit-2 PreToolUse hook stops the tool call BEFORE permission rules
@@ -70,26 +72,22 @@ set -uo pipefail
 MODE="${SST3_BRANCH_GUARD_MODE:-WARN}"
 LOG="${SST3_BRANCH_GUARD_LOG:-$HOME/.claude/hooks/branch-guard.log}"
 
-# Messages are double-quote-free on purpose: the jq-missing fallback emits JSON
-# via printf (no escaper available without jq), so an embedded " would break the
-# JSON string and Claude Code would silently discard the systemMessage. The
-# jq-present path additionally builds JSON with jq (self-escaping) — belt and
-# braces. (Ralph Tier-2 caught the original quoted-literal as invalid JSON.)
+# WARN_MSG is the operator's systemMessage; WARN_CTX is the agent's additionalContext
+# and carries no SST3_* mode hint (an agent cannot set a hook's environment — AC 1.3).
+# Both are JSON-escaped by _lib-hook-output.sh, which needs no jq.
 WARN_MSG='SST3 branch-safety: this git command moves/clobbers HEAD in the shared or worktree clone — the dotfiles#488 isolation hazard. Use the EnterWorktree tool (see CLAUDE.md Branch Safety section). WARN mode: the command STILL RAN; set SST3_BRANCH_GUARD_MODE=DENY to block.'
+WARN_CTX='SST3 branch-safety: the git command you just ran moves or clobbers HEAD in a shared or worktree clone (the dotfiles#488 isolation hazard); it was allowed and has run. Never switch branches: check that this worktree is still on its solo branch (git branch --show-current) and move work into an isolated worktree with the EnterWorktree tool (CLAUDE.md Branch Safety section).'
 DENY_MSG='SST3 branch-safety: branch switch/clobber BLOCKED (dotfiles#488 worktree-isolation invariant). Use the EnterWorktree tool; see CLAUDE.md Branch Safety section. (SST3_BRANCH_GUARD_MODE=DENY)'
 
-# jq-present path: build JSON with jq so any char in the message is escaped
-# correctly and the output is guaranteed-valid JSON. Only reached AFTER the
-# jq-missing guard below, so jq is always available here.
-emit_json() { jq -cn --arg m "$1" '{systemMessage:$m}'; }
+# shellcheck source=_lib-hook-output.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_lib-hook-output.sh"
 
 audit() {
   # AC5: ts=<iso> cwd=<dir> cmd=<matched> mode=<WARN|DENY> decision=<warn|deny>
-  local decision="$1" cmd="$2" dir
-  dir="$(mkdir -p "$(dirname "$LOG")" 2>/dev/null && printf '%s' "$PWD")"
-  printf 'ts=%s cwd=%s cmd=%s mode=%s decision=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${dir:-$PWD}" "$cmd" "$MODE" "$decision" \
-    >>"$LOG" 2>/dev/null || true
+  local decision="$1" cmd="$2" rec
+  printf -v rec 'ts=%s cwd=%s cmd=%s mode=%s decision=%s' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PWD" "$cmd" "$MODE" "$decision"
+  sst3_audit_append "$LOG" "$rec" branch-guard || :
 }
 
 # Decision sink. WARN → advisory (command runs); DENY → block (exit 2).
@@ -101,7 +99,7 @@ flag() {
     exit 2
   fi
   audit warn "$cmd"
-  emit_json "$WARN_MSG"
+  sst3_hook_emit PreToolUse "$WARN_CTX" "$WARN_MSG"
   exit 0
 }
 safe() { exit 0; }
@@ -111,12 +109,12 @@ raw_stdin="$(cat 2>/dev/null || true)"
 if ! command -v jq >/dev/null 2>&1; then
   # AC2: jq missing — WARN degraded-advisory (fail-open), DENY fail-CLOSED.
   if [[ "$MODE" == "DENY" ]]; then
-    printf 'SST3 branch-safety: jq not found — fail-CLOSED in DENY mode (cannot verify command safety). Install jq (<your-dotfiles-clone>/scripts/install.sh) or use WARN.\n' >&2
+    printf 'SST3 branch-safety: jq not found — fail-CLOSED in DENY mode (cannot verify command safety). Install jq (apt install jq; scripts/provision.sh installs it from wsl/packages.txt) or use WARN.\n' >&2
     exit 2
   fi
-  # jq is absent here — cannot use emit_json (jq-based). Emit JSON via printf
-  # with a guaranteed double-quote-free message so the JSON stays valid.
-  printf '{"systemMessage":"%s"}\n' 'SST3 branch-safety: jq not found — classifier degraded, command not inspected. Verify branch safety manually (CLAUDE.md Branch Safety section). Install jq via <your-dotfiles-clone>/scripts/install.sh.'
+  sst3_hook_emit PreToolUse \
+    'SST3 branch-safety: jq is not installed, so the branch guard could not inspect the command you just ran. If it switched or created a branch, check that this worktree is still on its solo branch (CLAUDE.md Branch Safety section).' \
+    'SST3 branch-safety: jq not found — classifier degraded, command not inspected. Verify branch safety manually (CLAUDE.md Branch Safety section). Install jq: apt install jq (scripts/provision.sh installs it from wsl/packages.txt).'
   exit 0
 fi
 

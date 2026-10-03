@@ -10,10 +10,13 @@
 #   normalise_lang <lang>                    — canonicalise language name; exit 64 if unsupported (Phase 3)
 #   require_engine_version <tool> <min>      — warn-only stderr if version below pin (Phase 3)
 #   read_paths_from <ndjson_file>            — emit unique file paths from {file:...} NDJSON (Phase 8 retrofit)
+#   load_paths_from <ndjson_file> <array>    — read_paths_from into an array in the CALLER's shell; exit 65 on a bad list (#577)
+#   paths_from_scan_targets <list> <targets> — engine targets: the listed files, or every git-listed file with no list (#577)
+#   run_over_targets <out> <targets> <cmd...> — run `<cmd...> -- <targets>` in argv batches under ARG_MAX (#577)
 #   wrapper_sentinel <name> <count> <kind>   — "I ran" stderr line; call from EXIT trap
 #   activate_paths_from_filter <ndjson>      — install transparent stdout NDJSON .file filter (Phase 8)
 #   sst3_solo_branch_alt <issue>             — canonical solo-branch ERE alternation (#509 AC6.5)
-#   ast_grep_check_rc <wrapper> <rc>         — discriminate broken engine from benign empty (#547 AC 6.1)
+#   ast_grep_check_rc <wrapper> <rc> [engine] — discriminate broken engine from benign empty (#547 AC 6.1)
 #   probe_or_fail [--numeric] <label> -- <cmd...>
 #                                            — run a probe; echo its stdout, or return 1 loudly
 #                                              rather than substituting a clean-looking default (#565 AC 5.1)
@@ -26,6 +29,13 @@
 # the FIRST malformed stdout line and silently drops everything after.
 # Wrappers MUST emit only valid one-object-per-line JSON to stdout.
 # stderr (sentinels, diagnostics) is unaffected.
+
+# mktemp builds its paths from TMPDIR, and the wrappers pass them to tools as trusted operands,
+# so a relative TMPDIR such as `-x` made each one read as an option (#577 Ralph r9c).
+if [[ -n "${TMPDIR:-}" && "$TMPDIR" != /* ]]; then
+    echo "ERROR: TMPDIR must be an absolute path, not '$TMPDIR'" >&2
+    exit 64
+fi
 
 # PATH bootstrap — relocated from sst3-self-test.sh:22-37 (Issue #456).
 # Reaches engines under $HOME/{.cargo,.local,.npm-global}/bin from non-interactive
@@ -114,9 +124,24 @@ require_engine_version() {
     fi
 }
 
+# The one spelling of a path, relative to the cwd the wrapper scans: a `$cwd/` prefix
+# and leading `./` removed, because the engines print `path` (ast-grep) or `./path`
+# (ripgrep given `.`) and an allow-list spelled `./a.py` made the ast-grep wrappers
+# emit nothing (#577 Ralph r3). A jq `def`, used by BOTH sides of every membership test
+# (the list below and the record filter), so the two can never spell a path differently.
+# Callers pass `--arg cwd "$PWD/"`.
+SST3_JQ_CANON_PATH='def canon: if startswith($cwd) then .[($cwd | length):] else . end | sub("^(\\./)+"; "");'
+
 # Read NDJSON file emitting one file path per line, deduplicated, in input order.
 # Each NDJSON record must have a `.file` string. Records lacking `.file` are skipped.
 # Used by --paths-from <file> retrofit (Phase 8) and the self-test driver.
+# Paths come out in the canonical spelling above. A list that is not valid NDJSON,
+# a `.file` that is not a string, or a path holding a control character (a newline
+# would split it in this line-per-path output) exits 65: before #577 Ralph r4 jq's
+# parse error was swallowed by the pipe into awk, the list ended at the bad line with
+# exit 0, and every path after it was silently never scanned. Called inside `$(…)` or
+# `< <(…)` this exit ends only that subshell: use load_paths_from, which stops the
+# wrapper itself.
 read_paths_from() {
     local ndjson_file="$1"
     if [[ ! -r "$ndjson_file" ]]; then
@@ -127,7 +152,119 @@ read_paths_from() {
         echo 'ERROR: jq not installed; see dotfiles/docs/guides/code-query-playbook.md "Wrapper-Script Lane > Install"' >&2
         exit 127
     fi
-    jq -r 'select(.file != null) | .file' "$ndjson_file" | awk '!seen[$0]++'
+    local listed
+    if ! listed="$(jq -r --arg cwd "$PWD/" "$SST3_JQ_CANON_PATH"'
+            select(.file != null) | .file
+            | if type != "string" then error("a .file value is not a string: \(tojson)")
+              elif test("[[:cntrl:]]") then error("a path holds a control character: \(tojson)")
+              else canon end' 2>&1 <"$ndjson_file")"; then
+        echo "ERROR: --paths-from $ndjson_file is not a list of {\"file\": \"<path>\"} records, so which files to scan is unknown: ${listed##*$'\n'}" >&2
+        exit 65
+    fi
+    [[ -n "$listed" ]] && printf '%s\n' "$listed" | awk '!seen[$0]++'
+    return 0
+}
+
+# load_paths_from <ndjson_file> <array_name> — read_paths_from into the named array,
+# run in the CALLER's shell so its exit (64 unreadable, 65 malformed, 127 no jq) stops
+# the wrapper. The previous idiom, `while read … done < <(read_paths_from …)`, ran it in
+# a process substitution whose exit status nobody reads (#577 Ralph r4 T3).
+load_paths_from() {
+    local _lpf_list _lpf_rc=0
+    _lpf_list="$(read_paths_from "$1")" || _lpf_rc=$?
+    (( _lpf_rc == 0 )) || exit "$_lpf_rc"
+    local -n _lpf_out="$2"
+    _lpf_out=()
+    [[ -n "$_lpf_list" ]] && mapfile -t _lpf_out <<< "$_lpf_list"
+    return 0
+}
+
+# paths_from_scan_targets <list_array> <targets_array> — what a wrapper hands its
+# engines: the listed files themselves when a --paths-from list was given, else `.`.
+# Walking `.` and filtering by the list afterwards dropped every listed file the walk
+# never visits — a hidden directory, an ignored file — while an engine given the path
+# scans it (#577 Ralph r4 T3: a net-new call in `.claude/x.py` passed the SEC gate).
+# A listed path that no longer exists (deleted in the diff) has nothing to scan and is
+# left out, so an empty result with a list given means SCAN NOTHING: the caller must
+# skip its engine call, because an engine handed no path reads `.`.
+paths_from_scan_targets() {
+    local -n _pst_in="$1" _pst_out="$2"
+    _pst_out=()
+    local _pst_p
+    if [[ ${#_pst_in[@]} -eq 0 ]]; then
+        # Whole-tree mode lists what git knows (tracked + untracked, not ignored)
+        # instead of handing the engine `.` to walk: the walk skipped hidden
+        # directories and anything a .ignore, .rgignore or nested .gitignore hides,
+        # TRACKED files included (#577 escalation, class C4: a Popen in the tracked
+        # .claude/skills/design-fidelity/scripts/shoot.py was never scanned).
+        # The list is every file type: each engine picks its own. ast-grep run with
+        # --lang reads only that language's extensions, even from an explicit list
+        # (.jsx/.mjs/.cjs under javascript included), and the ripgrep secret rules
+        # read every file, as the `.` walk did. An extension filter here dropped
+        # both (#577 Ralph r5: a key in a tracked config.yaml went unreported).
+        # Outside a git work tree it still walks `.`.
+        local _pst_list
+        _pst_list="$(mktemp)"
+        if git ls-files -z --cached --others --exclude-standard >"$_pst_list" 2>/dev/null; then
+            while IFS= read -r -d '' _pst_p; do
+                [[ -f "$_pst_p" ]] && _pst_out+=("$_pst_p")
+            done <"$_pst_list"
+        else
+            _pst_out=(.)
+        fi
+        rm -f "$_pst_list"
+        return 0
+    fi
+    for _pst_p in "${_pst_in[@]}"; do
+        [[ -e "$_pst_p" ]] && _pst_out+=("$_pst_p")
+    done
+    return 0
+}
+
+# run_over_targets <out_file> <targets_array> <engine> [args...] — run
+# `<engine> [args...] -- <targets>` in batches that fit the kernel's argument limit,
+# writing every batch's stdout to <out_file> (truncated first; stderr is dropped, as
+# the callers did). Handed over in one argv, a whole-tree list (every file git knows)
+# passed ARG_MAX in a large repo: the engine could not start (rc 126) and the scan
+# reported only an error record (#577 Ralph r6, 3.6 MB of names against 2 MB).
+# A name's cost is counted as 4 bytes a character (the UTF-8 maximum) plus its NUL
+# and argv pointer, so the names' share holds in any locale. The budget is half
+# ARG_MAX; the other half is for the environment and the engine's own arguments, so
+# an environment over half ARG_MAX still fails loud (rc 126). The callers export
+# LC_ALL=C.
+# Returns the first engine rc >= 2 (an error: no later batch runs), else 0. Both
+# engines exit 0 on a match and 1 on none, and the callers treat those alike.
+_rot_batch_rc() {
+    local _rb_out="$1"
+    local -n _rb_files="$2"
+    shift 2
+    "$@" -- "${_rb_files[@]}" >> "$_rb_out" 2>/dev/null
+}
+run_over_targets() {
+    local _rot_out="$1"
+    local -n _rot_t="$2"
+    shift 2
+    local _rot_budget _rot_size=0 _rot_rc _rot_p _rot_cost
+    local -a _rot_batch=()
+    _rot_budget=$(( $(getconf ARG_MAX) / 2 ))
+    : > "$_rot_out"
+    for _rot_p in "${_rot_t[@]}" ""; do
+        _rot_cost=$(( ${#_rot_p} * 4 + 9 ))
+        if [[ -z "$_rot_p" ]] || (( ${#_rot_batch[@]} > 0 && _rot_size + _rot_cost > _rot_budget )); then
+            if (( ${#_rot_batch[@]} > 0 )); then
+                _rot_rc=0
+                _rot_batch_rc "$_rot_out" _rot_batch "$@" || _rot_rc=$?
+                if (( _rot_rc >= 2 )); then return "$_rot_rc"; fi
+            fi
+            _rot_batch=()
+            _rot_size=0
+        fi
+        if [[ -n "$_rot_p" ]]; then
+            _rot_batch+=("$_rot_p")
+            _rot_size=$(( _rot_size + _rot_cost ))
+        fi
+    done
+    return 0
 }
 
 # Universal "I ran" sentinel — call from EXIT trap.
@@ -171,12 +308,17 @@ activate_paths_from_filter() {
         echo 'ERROR: jq not installed; see dotfiles/docs/guides/code-query-playbook.md "Wrapper-Script Lane > Install"' >&2
         exit 127
     fi
+    local -a listed
+    load_paths_from "$nd" listed
+    [[ ${#listed[@]} -eq 0 ]] && return 0
     local pattern
-    pattern=$(jq -Rsc 'split("\n")|map(select(length>0))' < <(read_paths_from "$nd"))
-    [[ -z "$pattern" || "$pattern" == "[]" ]] && return 0
-    # Redirect stdout into a coprocess that filters NDJSON by .file membership.
-    exec > >(jq -c --argjson allowed "$pattern" \
-        'if (.file? // null) == null then . else select(.file as $f | $allowed | index($f) != null) end')
+    pattern=$(printf '%s\n' "${listed[@]}" | jq -Rsc 'split("\n")|map(select(length>0))')
+    # Redirect stdout into a coprocess that filters NDJSON by .file membership. The
+    # record's path goes through the same `canon` as the list (a ripgrep record says
+    # `./path`; a wrapper given an absolute target prints `$PWD/path`, which before
+    # #577 Ralph r4 matched nothing once the list side dropped its `$PWD/` prefix).
+    exec > >(jq -c --arg cwd "$PWD/" --argjson allowed "$pattern" "$SST3_JQ_CANON_PATH"'
+        if (.file? // null) == null then . else select((.file | canon) as $f | $allowed | index($f) != null) end')
 }
 
 # --- could-not-look contract (#565 AC 5.1) --------------------------------
@@ -278,13 +420,15 @@ sst3_solo_branch_alt() {
 # When SST3_REAL_STDOUT_FD is set (callees.sh: helpers whose stdout is
 # $(...)-captured), the record goes to that saved FD so it cannot poison the
 # captured data.
+#   ripgrep has the same exit classes (0 match, 1 none, 2 error: an unreadable or
+#   missing named file, a bad regex), so its callers pass `rg` as the third argument.
 ast_grep_check_rc() {
-    local wrapper="$1" rc="${2:-99}"
+    local wrapper="$1" rc="${2:-99}" engine="${3:-ast-grep}"
     [[ "$rc" =~ ^[0-9]+$ ]] || rc=99
     (( rc <= 1 )) && return 0
     local record
-    record=$(printf '{"kind":"%s-error","reason":"ast-grep exited rc=%s: engine present but broken (benign classes: 0=match, 1=zero-matches)","rc":%s}' \
-        "$wrapper" "$rc" "$rc")
+    record=$(printf '{"kind":"%s-error","reason":"%s exited rc=%s: engine present but broken (benign classes: 0=match, 1=zero-matches)","rc":%s}' \
+        "$wrapper" "$engine" "$rc" "$rc")
     if [[ -n "${SST3_REAL_STDOUT_FD:-}" ]]; then
         printf '%s\n' "$record" >&"${SST3_REAL_STDOUT_FD}"
     else

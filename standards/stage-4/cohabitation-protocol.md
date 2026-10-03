@@ -1,5 +1,5 @@
 <!-- stages: 4 -->
-# Cross-Repo Cohabitation Protocol — Stage-4 Canonical (#498 AC 4.1)
+# Cross-Repo Cohabitation Protocol — Stage-4 Canonical
 
 Multi-repo + multi-worktree + multi-agent concurrency contract (orig. #469 Phase 4 / dotfiles#449 stage 5).
 
@@ -28,7 +28,7 @@ Two agents working on DIFFERENT Issues in DIFFERENT worktrees of the same canoni
 <!-- stages: 4 -->
 ## Cross-references
 
-- `../../standards/STANDARDS.md` "Cross-Repo Cohabitation Protocol" + "Multi-Agent Multi-Worktree Concurrency Contract".
+- `../../standards/stage-4/per-stage-feedback-capture.md` "Cross-Repo Cohabitation Protocol" + "Multi-Agent Multi-Worktree Concurrency Contract".
 - `CLAUDE.md` "Branch Safety (CRITICAL — DO NOT VIOLATE)" — operator-facing prose invariant.
 - `claude/hooks/sst3-branch-guard.sh` — runtime enforcement (#490).
 - `../../standards/stage-4/gate-2-merge.md` — the recursion-safe merge that respects this protocol.

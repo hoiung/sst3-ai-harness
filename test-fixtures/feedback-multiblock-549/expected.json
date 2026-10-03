@@ -1,7 +1,7 @@
 {
   "fixture": "feedback-multiblock-549",
   "issue": 549,
-  "scope": "Pair-scan segmentation + per-pair index emission + ordinal-aware flip targeting (#549 AC 1.1/1.2/1.3). Imperative driver: multiblock-1 (2-pair direct H2, 1563 shape — inline applied_in preserved, disposition FIELD parses 0 violations), multiblock-2 (Round-supplement H3 + trailing Stage 4 r2 re-run H2 attribution), flip-tool integration (flip lands at parser --emit-spans status_line = single-sourced segmentation; untouched sibling pair byte-identical; ordinal omission = loud error naming ordinals; pending-guard HELD leaves file unchanged). PRE-FIX capture (documented): live aggregate of feedback-auto_pb_swing_trader-1563.md Stage-5 yielded 1 record (last-pair-wins fold) before #549; post-fix 2.",
+  "scope": "Pair-scan segmentation + per-pair index emission + ordinal-aware flip targeting (#549 AC 1.1/1.2/1.3). Imperative driver: multiblock-1 (2-pair direct H2, 1563 shape — inline applied_in preserved, disposition FIELD parses 0 violations), multiblock-2 (Round-supplement H3 + trailing Stage 4 r2 re-run H2 attribution), flip-tool integration (flip lands at parser --emit-spans status_line = single-sourced segmentation; untouched sibling pair byte-identical; ordinal omission = loud error naming ordinals; pending-guard HELD leaves file unchanged; applied_in is written for applied + partial and withheld for superseded + rejected, over every status the tool accepts, #577 AC 5.1). PRE-FIX capture (documented): live aggregate of feedback-auto_pb_swing_trader-1563.md Stage-5 yielded 1 record (last-pair-wins fold) before #549; post-fix 2.",
   "driver": "run.sh",
   "exit_code": 0,
   "stdout_must_contain": [
@@ -10,6 +10,7 @@
     "PASS: flip lands at parser status_line, sibling pair byte-identical, post-flip parse clean",
     "PASS: ordinal omission is a loud error naming the ordinals found",
     "PASS: pending-guard HELD, file unchanged",
-    "OK: feedback-multiblock-549 fixture (5/5 assertion groups passed)"
+    "PASS: applied_in written for applied + partial, withheld for superseded + rejected",
+    "OK: feedback-multiblock-549 fixture (6/6 assertion groups passed)"
   ]
 }

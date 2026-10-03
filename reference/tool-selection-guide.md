@@ -377,7 +377,7 @@ gh api repos/hoiung/dotfiles/issues/365/dependencies/blocked_by \
 
 For structural code questions (callers, callees, imports, inheritance, blast radius, dead code, large functions, test coverage) the SST3 workflow provides **three layered tools**:
 
-1. **Wrapper-lane bash scripts** (Issues #445 + #447) — 38 stateless request-scoped wrappers across 4 phase-groups: Phase A code (20 — status, update, search, callers, callers-transitive, callees, subclasses, impact, large, review, untested-py, secrets, cross-lang, shell, recent-changes, at-ref, config, coverage, orphans, entry-points), Phase A-security (4 — sec-{subprocess, deserialize, secret-touchpoints, input-sources}), Phase A-dep (4 — dep-{list, usage, blast-radius, cve}), Phase B doc (5 — lint, links, yaml, frontmatter, toc), Phase C sync (4 — related-code, tool-eviction, doc-to-code, url-liveness), Phase D (1 — check.sh orchestrator). No daemon, no SQLite, no persistent graph, no embeddings. Inner engines: `ast-grep` (structural patterns) + `ripgrep` (literal search) + `git diff` + `coverage.py` + `jq` + `pip-audit` + `cargo audit` + `npm audit`. Every call re-parses on disk. Supported languages (the five ast-grep is wired for in the wrappers): Python, TypeScript, TSX, JavaScript, Rust. Other languages → subagent fallback.
+1. **Wrapper-lane bash scripts** (Issues #445 + #447) — stateless request-scoped wrappers in phase-groups: Phase A code (status, update, search, callers, callers-transitive, callees, subclasses, impact, large, review, untested-py, secrets, cross-lang, shell, recent-changes, at-ref, config, coverage, orphans, entry-points), Phase A-security (sec-{subprocess, deserialize, secret-touchpoints, input-sources}), Phase A-dep (dep-{list, usage, blast-radius, cve}), Phase B doc (lint, links, yaml, frontmatter, toc), Phase C sync (related-code, tool-eviction, doc-to-code), Phase D (check.sh orchestrator). No daemon, no SQLite, no persistent graph, no embeddings. Inner engines: `ast-grep` (structural patterns) + `ripgrep` (literal search) + `git diff` + `coverage.py` + `jq` + `pip-audit` + `cargo audit` + `npm audit`. Every call re-parses on disk. Supported languages (the five ast-grep is wired for in the wrappers): Python, TypeScript, TSX, JavaScript, Rust. Other languages → subagent fallback.
 2. **Subagent exploration** — `Agent(Explore)` for semantic / cross-document / intent / voice / non-code / ambiguous questions. Subagents are NEVER replaced by the wrapper-lane; the wrapper-lane narrows scope for them.
 3. **Bash tools** (Grep/Glob/Read) — unsupported-language fallback, direct file reads, text searches.
 
@@ -392,9 +392,9 @@ For structural code questions (callers, callees, imports, inheritance, blast rad
 
 ### Pre-Query Safety Gate (3 items)
 
-Run BEFORE any wrapper-lane call:
+Run BEFORE any wrapper-lane call (`$SST3` below is the resolver in Leader.md / SST3-solo.md Guardrails; a bare scripts/ path exits 127 outside the dotfiles clone, c4:T68):
 
-1. Wrapper invocable: `bash scripts/sst3-code-status.sh` exits 0 and emits valid JSON `{last_updated, file_count, source_languages}`. If exit non-zero (typically exit 127 = inner engine missing), see playbook Install section. The wrapper-lane is stateless — no graph to build, no freshness window.
+1. Wrapper invocable: `bash $SST3/sst3-code-status.sh` exits 0 and emits valid JSON `{last_updated, file_count, source_languages}`. If exit non-zero (typically exit 127 = inner engine missing), see playbook Install section. The wrapper-lane is stateless — no graph to build, no freshness window.
 2. Target language is supported by the wrapper-lane: Python, TypeScript, TSX, JavaScript, Rust (the five ast-grep is wired for in the wrappers). If not (Markdown, YAML, JSON, SQL, TOML, shell, HTML, Jinja, Dockerfile, Go, Java, etc.) → skip wrapper-lane, use subagents.
 3. Spot-check discipline: read one wrapper result from source before drawing conclusions. "Never Assume — Always Check" applies. `search` is keyword-only — verify with synonym sweep before any "no match" conclusion.
 
@@ -422,13 +422,13 @@ For any of the above → subagents remain the primary tool (see the 12 subagent-
 
 | Question | Wrapper call |
 |---|---|
-| Who calls `foo`? | `bash scripts/sst3-code-callers.sh foo <lang>` |
-| What does `foo` call? | `bash scripts/sst3-code-callees.sh foo <lang>` |
-| Blast radius of editing `file.py`? | `bash scripts/sst3-code-impact.sh <base-branch>` |
-| Any function over 200 lines? | `bash scripts/sst3-code-large.sh 200 <lang>` |
+| Who calls `foo`? | `bash $SST3/sst3-code-callers.sh foo <lang>` |
+| What does `foo` call? | `bash $SST3/sst3-code-callees.sh foo <lang>` |
+| Blast radius of editing `file.py`? | `bash $SST3/sst3-code-impact.sh <base-branch>` |
+| Any function over 200 lines? | `bash $SST3/sst3-code-large.sh 200 <lang>` |
 | Find tests covering `foo`? | ⊘ Deferred to semantic-subagent fallback — Phase A wrappers do not expose `tests_for` (Issue #445; no canonical call sites) |
-| Review for diff vs default branch? | `bash scripts/sst3-code-review.sh <base-branch>` (use `main` or `master` per repo) |
-| Wrapper-lane status? | `bash scripts/sst3-code-status.sh` |
+| Review for diff vs default branch? | `bash $SST3/sst3-code-review.sh origin/<base-branch>` (after a fetch; `origin/main` or `origin/master` per repo) |
+| Wrapper-lane status? | `bash $SST3/sst3-code-status.sh` |
 
 See `../../docs/guides/code-query-playbook.md` for full operational playbook (freshness recipe, fallback rules, embeddings policy, cadence governance).
 
@@ -437,7 +437,7 @@ See `../../docs/guides/code-query-playbook.md` for full operational playbook (fr
 ## References
 
 - [Checkbox MCP Server](../../mcp-servers/github-checkbox/README.md)
-- [GitHub MCP Documentation](https://github.com/modelcontextprotocol/servers/tree/main/src/github)
+- [GitHub MCP Documentation](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/github) (source of the registered `@modelcontextprotocol/server-github`; the reference servers moved to `servers-archived`)
 - [GitHub Relationships Guide](../reference/github-relationships-guide.md)
 - [WORKFLOW.md](../workflow/WORKFLOW.md)
 - [WORKFLOW.md Stage 4](../workflow/WORKFLOW.md) (Implementation)

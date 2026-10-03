@@ -167,6 +167,47 @@ WORKFLOW_MD="$CANON_DIR/workflow/WORKFLOW.md"
 # directory that does not exist there and silently loaded no stage-N clusters.
 STANDARDS_DIR="$CANON_DIR/standards"
 
+# c4:T46 (#577) — canon freshness on STDERR. One line naming the canon clone's
+# branch, short SHA and behind-count against origin's default, read from the remote
+# refs already on disk (no fetch, no network), so a stale canon is visible at every
+# stage load. stdout stays the canon emit: the pinned `| wc -c` sizes are unchanged.
+# Reported ONLY when git's own toplevel for REPO_ROOT is REPO_ROOT itself — a canon
+# nested inside a host repo (a flattened mirror unpacked in another checkout) must
+# not report the HOST's branch. Every git failure (no `.git`, a `.git` file pointing
+# nowhere, no remote refs) omits the line or the count; none may abort the loader
+# under `set -euo pipefail`, which is why each call carries its own `||`.
+# Every git call runs with the git-identity variables UNSET: the loader is run from
+# inside git hooks (pre-commit runs the self-test, which runs this loader), and an
+# inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE overrides `-C`, so the probe
+# would report the HOOK's repository (dotfiles#569; AP #31). The list mirrors
+# sst3_scrub_git_env in claude/hooks/_lib-repo-identity.sh, which this loader cannot
+# source: it ships to mirrors that carry no claude/hooks/.
+_canon_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY \
+    git -C "$REPO_ROOT" "$@" 2>/dev/null
+}
+canon_freshness() {
+  local top here branch sha def="" behind="" ref
+  top="$(_canon_git rev-parse --show-toplevel)" || return 0
+  top="$(cd "$top" 2>/dev/null && pwd -P)" || return 0
+  here="$(cd "$REPO_ROOT" && pwd -P)" || return 0
+  [[ "$top" == "$here" ]] || return 0
+  branch="$(_canon_git rev-parse --abbrev-ref HEAD)" || return 0
+  sha="$(_canon_git rev-parse --short HEAD)" || return 0
+  for ref in "$(_canon_git symbolic-ref --quiet --short refs/remotes/origin/HEAD || true)" \
+             origin/main origin/master; do
+    [[ -n "$ref" ]] || continue
+    if behind="$(_canon_git rev-list --count "HEAD..$ref")"; then def="$ref"; break; fi
+    behind=""
+  done
+  if [[ -n "$def" ]]; then
+    echo "load-stage-rules: canon $REPO_ROOT on $branch @ $sha, $behind behind $def" >&2
+  else
+    echo "load-stage-rules: canon $REPO_ROOT on $branch @ $sha, behind-count unknown (no origin default ref on disk)" >&2
+  fi
+}
+canon_freshness || true
+
 # Extraction logic lives in _load_stage_rules.py — single source of truth for
 # the per-stage section-extraction algorithm. The .py shares regex constants
 # with check-stage-tags.py via sst3_stage_tag_parser (#498 Stage 5 L1C F3).

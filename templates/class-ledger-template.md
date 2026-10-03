@@ -5,10 +5,12 @@ created: <YYYY-MM-DD>
 ---
 
 <!--
-Template for SST3-metrics/class-ledger/ledger-<repo>-<issue>.md (#567 Phase 2).
+Template for SST3-metrics/class-ledger/ledger-<repo>-<issue>.md.
 
-Created LAZILY: the file exists only from the first defect CLASS closed during this
-issue's Ralph loop — most issues never carry one. Operator ruling D2 (#567): a
+The ledger is opened at the first restart (c4:T06, #577): created at the issue's
+first Ralph restart, it records that finding's shape so a second same-shape FAIL is
+seen against it (the defect-class breaker, stage-4/ralph-review.md); `## Class:`
+blocks follow as classes close. Most issues never restart and never carry one. Operator ruling D2 (#567): a
 separate artefact, NOT a section of the per-issue feedback file (the feedback file
 is strictly-parsed prose in dotfiles; this must be RUNNABLE from the work repo's
 Ralph worktree). The feedback file carries a one-line pointer to this file.
@@ -32,6 +34,10 @@ Rules (canonical: stage-4/ralph-review.md "At fix time" + stage-4/mutation-verif
 - NOT-ENUMERATED lists classes the sweep/enumerator deliberately does not cover —
   the honesty register that keeps "0 survivors" qualified.
 -->
+
+## Restart shapes
+
+- restart <N>: <the failing finding's shape, one line> — same shape as restart <N-1>: <yes | no>
 
 ## Class: <short-kebab-slug>
 

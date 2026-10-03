@@ -9,6 +9,8 @@
     "PASS: scenario A clean-corpus --summarize exit 0",
     "PASS: scenario B broken-in-scope --summarize exit",
     "PASS: scenario C non-conforming-filename --summarize exit 0 + WARNING (AC7)",
-    "OK: feedback-aggregate-gate-486 fixture (3/3 assertions passed)"
+    "PASS: scenario D stage5_placeholder_still_fails --summarize exit",
+    "PASS: scenario E in_flight_placeholder_tolerated --summarize exit 0 + WARNING x2",
+    "OK: feedback-aggregate-gate-486 fixture (5/5 assertions passed)"
   ]
 }

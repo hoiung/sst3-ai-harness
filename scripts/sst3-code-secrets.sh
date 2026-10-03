@@ -51,9 +51,15 @@ _secrets_exit_sentinel() {
             "$SST3_PROBE_FAILED_MARKER" "$(wc -l <"$SST3_SCAN_READ_FAIL_LOG")" >&2
         [[ "$rc" -eq 0 ]] && rc=2
     fi
-    rm -f "${LITERAL_TMP:-}" "${SST3_SCAN_READ_FAIL_LOG:-}"
+    rm -f -- "${LITERAL_TMP:-}" "${SST3_SCAN_READ_FAIL_LOG:-}" "${PATCH_NAMES_TMP:-}"
     exit "$rc"
 }
+# Set before the trap can run: each is assigned later, or only in one mode, so an exit before
+# then read the caller's environment. `PATCH_NAMES_TMP=<file> ... --file` deleted that file,
+# and `=--help` printed rm's usage onto the NDJSON output (#577 Ralph r9 Opus).
+LITERAL_TMP=""
+SST3_SCAN_READ_FAIL_LOG=""
+PATCH_NAMES_TMP=""
 trap _secrets_exit_sentinel EXIT
 
 SST3_EMITTED_COUNT="${SST3_EMITTED_COUNT:-0}"
@@ -128,7 +134,7 @@ fi
 
 # Build the literal-term list (strip comments, blank lines, section headers).
 LITERAL_TMP=$(mktemp)
-grep -vE '^\s*#|^\s*$|^\[' "$BLOCKLIST" > "$LITERAL_TMP" || true
+grep -vE '^\s*#|^\s*$|^\[' -- "$BLOCKLIST" > "$LITERAL_TMP" || true
 
 if [[ ! -s "$LITERAL_TMP" ]]; then
     echo "WARN: blocklist resolved to empty literal-term list ($BLOCKLIST)" >&2
@@ -143,7 +149,7 @@ classify_token() {
         /^\[/ { sect = substr($0, 2, length($0)-2); next }
         /^\s*#|^\s*$/ { next }
         $0 == want { print sect; exit }
-    ' "$BLOCKLIST"
+    ' <"$BLOCKLIST"
 }
 
 emit_match() {
@@ -184,7 +190,10 @@ _scan_file_or_fail() {
     # scan as a clean file. That is this Issue's own F2 (`ddd964a5`, "set -e made
     # the could-not-look path unreachable") reappearing in the fix for S4.
     # Inside an `if` condition, errexit is suspended and the status is ours.
-    if out="$(grep -Fnof "$LITERAL_TMP" "$file" 2>/dev/null)"; then
+    # `--` ends grep's options: a tracked file named `-i` was read as an option, grep
+    # then read the caller's file list from stdin, and every file after it went
+    # unscanned at exit 0 (#577 Ralph r8c).
+    if out="$(grep -Fnof "$LITERAL_TMP" -- "$file" 2>/dev/null)"; then
         rc=0
     else
         rc=$?
@@ -238,6 +247,65 @@ scan_stream() {
 # AND untracked-but-not-ignored files, and walks the filesystem when there is no
 # repo at all. The walk is the CORRECT answer for `--all` outside a repo, not a
 # silent degradation — and a genuine git failure inside a repo is loud.
+# Both diff modes (--diff, --staged) scan added lines through here. Each file's name comes
+# from git's NUL-separated name list, and that file's added lines from a diff of that file
+# alone, so no name is ever parsed from a patch header (#577 Ralph r8b). Parsing `+++ b/`
+# missed every name git quotes there (`"`, `\`, a tab; non-ASCII before core.quotePath),
+# and a missed header kept the previous file's name, so with --paths-from the leak was
+# dropped; a name with a space kept git's trailing tab. Hunk lines are read by state (after
+# `@@`, before the next `diff --git`), so an added line that starts with `+` and an empty
+# context line (diff.suppressBlankEmpty) are counted too. The diff reads as text whatever
+# the config says (#577 Ralph r7 Opus): no colour, external diff, textconv or rename
+# pairing. git runs from the repo root (so diff.relative cannot narrow it, #577 Ralph r8),
+# with literal pathspecs.
+scan_patch() {
+    local label="$1"; shift
+    local names_file err rc=0
+    if ! names_file="$(mktemp)"; then
+        printf '%s: %s — could not look: mktemp failed\n' "$SST3_PROBE_FAILED_MARKER" "$label" >&2
+        return 2
+    fi
+    PATCH_NAMES_TMP="$names_file"
+    err="$(git -C "$REPO_ROOT" diff --name-only -z --no-renames "$@" 2>&1 >"$names_file")" || rc=$?
+    if (( rc != 0 )); then
+        printf '%s: %s — could not look: git diff --name-only exited %s: %s\n' \
+            "$SST3_PROBE_FAILED_MARKER" "$label" "$rc" "${err:0:300}" >&2
+        return 2
+    fi
+    local -a names=()
+    mapfile -d '' -t names < "$names_file"
+    local name patch line content tok in_hunk offset
+    for name in "${names[@]}"; do
+        patch="$(probe_or_fail "$label ($name)" -- git -C "$REPO_ROOT" --literal-pathspecs \
+            diff --no-color --no-ext-diff --no-textconv --text --no-renames "$@" -- "$name")" || return 2
+        in_hunk=0
+        offset=0
+        while IFS= read -r line; do
+            if [[ "$line" == "diff --git "* ]]; then
+                in_hunk=0
+                continue
+            fi
+            if [[ "$line" =~ ^@@\ -[0-9]+(,[0-9]+)?\ \+([0-9]+) ]]; then
+                offset="${BASH_REMATCH[2]}"
+                in_hunk=1
+                continue
+            fi
+            (( in_hunk )) || continue
+            case "$line" in
+                +*)
+                    content="${line:1}"
+                    while IFS= read -r tok; do
+                        [[ -z "$tok" ]] && continue
+                        emit_match "$name" "$offset" "$tok" "blocklist"
+                    done < <(printf '%s\n' "$content" | grep -Fof "$LITERAL_TMP" -o 2>/dev/null || true)
+                    offset=$((offset + 1)) ;;
+                " "*|"") offset=$((offset + 1)) ;;
+            esac
+        done <<< "$patch"
+    done
+    return 0
+}
+
 enumerate_all_scan_targets() {
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         # NOT a probe failure — the walk is the CORRECT answer for `--all`
@@ -289,85 +357,30 @@ case "$MODE" in
             echo "ERROR: --diff requires <base-branch>" >&2
             exit 64
         fi
+        # A ref never starts with `-`; git read `--output=P` as an option, wrote the diff
+        # to P and the scan reported 0 leaks (#577 Ralph r8c).
+        if [[ "$TARGET" == -* ]]; then
+            echo "ERROR: --diff <base-branch> must be a branch or commit, not an option: '$TARGET'" >&2
+            exit 64
+        fi
         # Enumeration status captured BEFORE the loop, exactly as --all does.
         # dotfiles#565 Ralph Tier 3 F9: AC 5.3 fixed --all and left --diff and
         # --staged carrying `2>/dev/null || true` inside a process substitution,
         # which discards the status twice over. Both are documented operator
         # modes. Tier 3 measured `--diff origin/main` against an unresolvable
         # ref: `emitted 0 leak(s)`, EXIT=0, over a real on-disk leak.
-        if ! DIFF_OUT="$(probe_or_fail "sst3-code-secrets --diff: diff ${TARGET}...HEAD" \
-                -- git diff "${TARGET}...HEAD")"; then
+        if ! scan_patch "sst3-code-secrets --diff: diff ${TARGET}...HEAD" "${TARGET}...HEAD"; then
             echo "ERROR: sst3-code-secrets --diff could not produce a diff against '${TARGET}' — refusing to report 0 leaks over a range it never read (dotfiles#565 AC 5.3 / Ralph T3 F9)." >&2
             exit 2
         fi
-        # +-prefixed added lines only; preserve file headers.
-        # shellcheck disable=SC2034
-        CURRENT_FILE=""
-        # Initialised HERE, not on first use. Found by F9's own proof harness and
-        # PRE-EXISTING (identical at HEAD): under `set -u` the very first
-        # `--- a/<file>` header of any real diff matches the `^[\ -]` context-line
-        # branch below, which increments an unset LINE_OFFSET and kills the run —
-        # "line 238: LINE_OFFSET: unbound variable", then `emitted 0 leak(s)`.
-        # The unresolvable-ref case F9 reported produced an EMPTY diff, so the
-        # loop never ran and this never fired; every NON-empty diff died instead.
-        # Both operator modes were therefore incapable of reporting a leak at all.
-        # Correctness of the numbers does not depend on this seed — a `@@` header
-        # always resets the offset before any `+` line is emitted.
-        LINE_OFFSET=0
-        while IFS= read -r LINE; do
-            if [[ "$LINE" =~ ^\+\+\+\ b/(.+)$ ]]; then
-                CURRENT_FILE="${BASH_REMATCH[1]}"
-                LINE_OFFSET=0
-                continue
-            fi
-            if [[ "$LINE" =~ ^@@\ -[0-9]+(,[0-9]+)?\ \+([0-9]+) ]]; then
-                LINE_OFFSET="${BASH_REMATCH[2]}"
-                continue
-            fi
-            if [[ "$LINE" =~ ^\+[^+] ]]; then
-                content="${LINE:1}"
-                while IFS= read -r tok; do
-                    [[ -z "$tok" ]] && continue
-                    emit_match "${CURRENT_FILE:-unknown}" "${LINE_OFFSET:-0}" "$tok" "blocklist"
-                done < <(printf '%s\n' "$content" | grep -Fof "$LITERAL_TMP" -o 2>/dev/null || true)
-                LINE_OFFSET=$((LINE_OFFSET + 1))
-            elif [[ "$LINE" =~ ^[\ -] ]]; then
-                LINE_OFFSET=$((LINE_OFFSET + 1))
-            fi
-        done <<< "$DIFF_OUT"
         ;;
     --staged)
         # Same treatment as --diff above; this is the pre-commit path, so a
         # swallowed failure here reports a clean commit over an unread index.
-        if ! DIFF_OUT="$(probe_or_fail "sst3-code-secrets --staged: diff --cached" \
-                -- git diff --cached)"; then
+        if ! scan_patch "sst3-code-secrets --staged: diff --cached" --cached; then
             echo "ERROR: sst3-code-secrets --staged could not read the staged diff — refusing to report 0 leaks over an index it never read (dotfiles#565 AC 5.3 / Ralph T3 F9)." >&2
             exit 2
         fi
-        # Staged diff vs index; use --cached to scan staged adds only.
-        CURRENT_FILE=""
-        LINE_OFFSET=0  # same unbound-variable death as --diff above
-        while IFS= read -r LINE; do
-            if [[ "$LINE" =~ ^\+\+\+\ b/(.+)$ ]]; then
-                CURRENT_FILE="${BASH_REMATCH[1]}"
-                LINE_OFFSET=0
-                continue
-            fi
-            if [[ "$LINE" =~ ^@@\ -[0-9]+(,[0-9]+)?\ \+([0-9]+) ]]; then
-                LINE_OFFSET="${BASH_REMATCH[2]}"
-                continue
-            fi
-            if [[ "$LINE" =~ ^\+[^+] ]]; then
-                content="${LINE:1}"
-                while IFS= read -r tok; do
-                    [[ -z "$tok" ]] && continue
-                    emit_match "${CURRENT_FILE:-unknown}" "${LINE_OFFSET:-0}" "$tok" "blocklist"
-                done < <(printf '%s\n' "$content" | grep -Fof "$LITERAL_TMP" -o 2>/dev/null || true)
-                LINE_OFFSET=$((LINE_OFFSET + 1))
-            elif [[ "$LINE" =~ ^[\ -] ]]; then
-                LINE_OFFSET=$((LINE_OFFSET + 1))
-            fi
-        done <<< "$DIFF_OUT"
         ;;
     --file)
         if [[ -z "$TARGET" || ! -r "$TARGET" ]]; then
@@ -382,7 +395,9 @@ case "$MODE" in
                 [[ -z "$tok" ]] && continue
                 emit_match "$TARGET" "$line_no" "$tok" "blocklist"
             done < <(printf '%s\n' "$rest" | grep -Fof "$LITERAL_TMP" -o 2>/dev/null || true)
-        done < <(grep -Fnof "$LITERAL_TMP" "$TARGET" 2>/dev/null || true)
+        # The same read --all uses: a path grep cannot read (a directory passes -r) is a
+        # could-not-look, not a clean file (#577 Ralph r8c).
+        done < <(_scan_file_or_fail "$TARGET")
         ;;
     --all)
         # The enumeration's exit status is captured BEFORE the loop: a process

@@ -1,5 +1,5 @@
 <!-- stages: 4 -->
-# File Housekeeping — Stage-4 Canonical (#498 AC 4.1)
+# File Housekeeping — Stage-4 Canonical
 
 Per-Issue housekeeping invariants (#108).
 

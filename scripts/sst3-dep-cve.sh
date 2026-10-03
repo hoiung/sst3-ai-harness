@@ -7,9 +7,17 @@
 #          severity: lowercase canonical (low|medium|high|critical|unknown)
 # Engines: pip-audit (Python) | cargo audit (Rust) | npm audit (JS).
 #          require_engine_version warn-only on each (per Phase 3).
-# Behaviour: missing-engine-but-manifest-present → stderr WARN + skip that
-#            ecosystem. Wrapper exits 0 even with findings (advisory data
-#            flows via NDJSON, never via exit code — consumers decide).
+# Behaviour: advisories flow via NDJSON, never via the exit code — consumers
+#            decide. Every ecosystem is attempted; then the exit code says
+#            whether each one was actually LOOKED AT:
+#            0   = every present manifest's engine ran and its output parsed;
+#            3   = an engine ran but broke (no output, unparseable output, or an
+#                  npm `.error` payload): one {kind:"dep-cve-error"} record per
+#                  ecosystem, and sst3-check --strict reads the phase as error;
+#            127 = a manifest is present but its engine is not installed.
+#            Until #577 all three printed a stderr WARN and exited 0, which
+#            `sst3-check --dep --strict` (the CI gate) read as "no advisories"
+#            (escalation class C3, fail-open reader).
 
 set -euo pipefail
 
@@ -85,9 +93,32 @@ emit_record() {
     SST3_EMITTED_COUNT=$((SST3_EMITTED_COUNT + 1))
 }
 
+COULD_NOT_LOOK=()
+ENGINE_MISSING=()
+# could_not_look <ecosystem> <reason>: the engine ran but its answer is unusable.
+could_not_look() {
+    COULD_NOT_LOOK+=("$1")
+    echo "ERROR: $1 advisories could not be read: $2" >&2
+    jq -nc --arg e "$1" --arg r "$2" '{kind:"sst3-dep-cve-error", ecosystem:$e, reason:$r}'
+}
+# rows <ecosystem> <json> <jq-filter>: emit one record per advisory row. Parsing
+# is checked: a malformed payload used to be `2>/dev/null || true`, i.e. zero
+# rows, i.e. clean.
+rows() {
+    local eco="$1" json="$2" filter="$3" tsv
+    if ! tsv="$(printf '%s' "$json" | jq -r "$filter" 2>&1)"; then
+        could_not_look "$eco" "its JSON did not parse as expected: $(printf '%s' "$tsv" | head -c 200)"
+        return 0
+    fi
+    while IFS=$'\t' read -r pkg ver cve sev; do
+        [[ -z "$pkg" ]] && continue
+        emit_record "$eco" "$pkg" "$ver" "$cve" "$sev"
+    done <<< "$tsv"
+}
+
 # --- Python via pip-audit ---
-if find . -maxdepth 4 -type f \( -name pyproject.toml -o -name requirements.txt -o -name poetry.lock \) \
-    -not -path './.git/*' -print -quit 2>/dev/null | grep -q .; then
+if [[ -n "$(find . -maxdepth 4 -type f \( -name pyproject.toml -o -name requirements.txt -o -name poetry.lock \) \
+    -not -path './.git/*' -print -quit 2>/dev/null)" ]]; then
     if command -v pip-audit >/dev/null 2>&1; then
         require_engine_version pip-audit 2.6
         # Stage 5 fix (D2) — capture pip-audit exit code; emit stderr WARN
@@ -97,71 +128,81 @@ if find . -maxdepth 4 -type f \( -name pyproject.toml -o -name requirements.txt 
         # pip-audit -f json emits {dependencies:[{name, version, vulns:[{id, fix_versions, ...}]}]}
         _pip_audit_rc=0
         _pip_audit_out=$(pip-audit -f json 2>/dev/null) || _pip_audit_rc=$?
-        if [[ "$_pip_audit_rc" -ne 0 && -z "$_pip_audit_out" ]]; then
-            echo "WARN: pip-audit exited $_pip_audit_rc with no JSON output (network blocked? lockfile malformed?); python advisories unavailable" >&2
-        fi
-        while IFS=$'\t' read -r pkg ver cve sev; do
-            [[ -z "$pkg" ]] && continue
-            emit_record "python" "$pkg" "$ver" "$cve" "$sev"
-        done < <(printf '%s' "$_pip_audit_out" \
-            | jq -r '
-                .dependencies[]?
+        # pip-audit exits 1 when it FINDS advisories, with JSON on stdout, so a
+        # non-zero rc alone is not a failure; a payload without .dependencies is.
+        if ! printf '%s' "$_pip_audit_out" | jq -e '.dependencies | type == "array"' >/dev/null 2>&1; then
+            could_not_look python "pip-audit exited $_pip_audit_rc without a dependency list (network blocked? environment broken?)"
+        else
+            rows python "$_pip_audit_out" '
+                .dependencies[]
                 | . as $d
                 | $d.vulns[]?
-                | [$d.name, $d.version, .id, (.severity // "unknown")] | @tsv' \
-            2>/dev/null || true)
+                | [$d.name, $d.version, .id, (.severity // "unknown")] | @tsv'
+            # A dependency pip-audit could not audit (a local package not on
+            # PyPI, say) carries skip_reason. Not a failure, but it was dropped
+            # without a word; it is now counted and named.
+            _skipped="$(printf '%s' "$_pip_audit_out" | jq -r '[.dependencies[] | select(.skip_reason) | "\(.name) (\(.skip_reason))"] | join("; ")')"
+            if [[ -n "$_skipped" ]]; then
+                echo "WARN: pip-audit could not audit: $_skipped" >&2
+            fi
+        fi
     else
-        echo "WARN: pip-audit not installed; skipping python ecosystem (manifest detected)" >&2
+        echo "ERROR: pip-audit not installed, but a python manifest is present: python advisories were NOT checked" >&2
+        ENGINE_MISSING+=(python)
     fi
 fi
 
 # --- Rust via cargo audit ---
-if find . -maxdepth 4 -type f -name Cargo.lock -not -path './.git/*' -print -quit 2>/dev/null | grep -q .; then
+if [[ -n "$(find . -maxdepth 4 -type f -name Cargo.lock -not -path './.git/*' -print -quit 2>/dev/null)" ]]; then
     if command -v cargo-audit >/dev/null 2>&1 || command -v cargo >/dev/null 2>&1; then
         require_engine_version cargo 1.70
         _cargo_audit_rc=0
         _cargo_audit_out=$(cargo audit --json 2>/dev/null) || _cargo_audit_rc=$?
-        # Stage 5 fix (D2) — cargo audit exits non-zero ALSO when vulnerabilities
-        # found, so only WARN when stdout is empty (the engine genuinely failed).
-        if [[ "$_cargo_audit_rc" -ne 0 && -z "$_cargo_audit_out" ]]; then
-            echo "WARN: cargo audit exited $_cargo_audit_rc with no JSON output (network blocked? Cargo.lock malformed?); rust advisories unavailable" >&2
-        fi
-        while IFS=$'\t' read -r pkg ver cve sev; do
-            [[ -z "$pkg" ]] && continue
-            emit_record "rust" "$pkg" "$ver" "$cve" "$sev"
-        done < <(printf '%s' "$_cargo_audit_out" \
-            | jq -r '
+        # cargo audit exits non-zero ALSO when vulnerabilities are found, so the
+        # payload decides: one without .vulnerabilities means it did not run.
+        if ! printf '%s' "$_cargo_audit_out" | jq -e '.vulnerabilities | type == "object"' >/dev/null 2>&1; then
+            could_not_look rust "cargo audit exited $_cargo_audit_rc without a vulnerability report (network blocked? Cargo.lock malformed?)"
+        else
+            rows rust "$_cargo_audit_out" '
                 .vulnerabilities.list[]?
-                | [.package.name, .package.version, .advisory.id, (.advisory.severity // "unknown")] | @tsv' \
-            2>/dev/null || true)
+                | [.package.name, .package.version, .advisory.id, (.advisory.severity // "unknown")] | @tsv'
+        fi
     else
-        echo "WARN: cargo audit not installed; skipping rust ecosystem (Cargo.lock detected)" >&2
+        echo "ERROR: cargo audit not installed, but a Cargo.lock is present: rust advisories were NOT checked" >&2
+        ENGINE_MISSING+=(rust)
     fi
 fi
 
 # --- JavaScript via npm audit ---
-if find . -maxdepth 4 -type f -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' -print -quit 2>/dev/null | grep -q .; then
+if [[ -n "$(find . -maxdepth 4 -type f -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' -print -quit 2>/dev/null)" ]]; then
     if command -v npm >/dev/null 2>&1; then
         require_engine_version npm 9.0
         _npm_audit_rc=0
         _npm_audit_out=$(npm audit --json 2>/dev/null) || _npm_audit_rc=$?
-        if [[ "$_npm_audit_rc" -ne 0 && -z "$_npm_audit_out" ]]; then
-            echo "WARN: npm audit exited $_npm_audit_rc with no JSON output (network blocked? package-lock.json malformed?); javascript advisories unavailable" >&2
-        fi
-        while IFS=$'\t' read -r pkg ver cve sev; do
-            [[ -z "$pkg" ]] && continue
-            emit_record "javascript" "$pkg" "$ver" "$cve" "$sev"
-        done < <(printf '%s' "$_npm_audit_out" \
-            | jq -r '
-                .vulnerabilities | to_entries[]?
+        # npm reports its own failures (ENOLOCK, a registry error) as JSON with
+        # an .error key and no .vulnerabilities; that parsed to zero rows.
+        if ! printf '%s' "$_npm_audit_out" | jq -e '(.error | not) and (.vulnerabilities | type == "object")' >/dev/null 2>&1; then
+            could_not_look javascript "npm audit exited $_npm_audit_rc without a vulnerability report: $(printf '%s' "$_npm_audit_out" | jq -r '.error.summary // .error.code // empty' 2>/dev/null | head -c 200)"
+        else
+            rows javascript "$_npm_audit_out" '
+                .vulnerabilities | to_entries[]
                 | .key as $k
                 | .value.via[]?
                 | select(type == "object")
-                | [$k, (.range // ""), (.url // ""), (.severity // "unknown")] | @tsv' \
-            2>/dev/null || true)
+                | [$k, (.range // ""), (.url // ""), (.severity // "unknown")] | @tsv'
+        fi
     else
-        echo "WARN: npm not installed; skipping javascript ecosystem (package-lock.json detected)" >&2
+        echo "ERROR: npm not installed, but a package-lock.json is present: javascript advisories were NOT checked" >&2
+        ENGINE_MISSING+=(javascript)
     fi
 fi
 
+if [[ "${#COULD_NOT_LOOK[@]}" -gt 0 ]]; then
+    echo "ERROR: advisories NOT established for: ${COULD_NOT_LOOK[*]} (engine ran but broke)" >&2
+    exit 3
+fi
+if [[ "${#ENGINE_MISSING[@]}" -gt 0 ]]; then
+    echo "ERROR: advisories NOT established for: ${ENGINE_MISSING[*]} (engine not installed)" >&2
+    exit 127
+fi
 exit 0

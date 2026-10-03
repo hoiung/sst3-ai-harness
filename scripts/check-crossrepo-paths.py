@@ -25,34 +25,139 @@ Exceptions:
   the whole check is skipped — sibling paths like `../standards/` are correct
   there, not cross-repo violations (dotfiles#553).
 
+Execution-context matrix (c4:T68, dotfiles#577 AC 3.8):
+  Every `bash|sh|source|python[3] <path>` whose path names `scripts/` or
+  the `$SST3` resolver, and every `from SST3.scripts.<mod> import` (the bare
+  form spelt as a module path), is resolved in the full matrix
+  {dotfiles main, dotfiles worktree, consumer main, consumer worktree}
+  × {execution, public mirror}. Execution: the path, resolved from that
+  context's working directory, must reach that context's canon (a dotfiles
+  worktree runs its own SST3 tree; the other three run the dotfiles main
+  clone's). Public mirror: the invocation after the file's drift-manifest
+  transform chain for each public mirror (sst3_utils.MIRROR_CLONES; a
+  `divergent` hand-maintained mirror is not derived from the line and is not
+  read) must not keep the operator's filesystem layout (`~/DevProjects`,
+  `/home/<user>/`).
+  Files the dotfiles repo alone runs (tests, fixtures, scripts/ docs,
+  archives, research, metrics) need only the two dotfiles cells. The prefix
+  rule and its exceptions (including `../dotfiles/SST3/` and the
+  CLAUDE_TEMPLATE.md exclusion) do not exempt a line from the matrix, and a
+  wrong-example marker does. The one form that passes every cell is the
+  resolver defined in Leader.md / SST3-solo.md Guardrails: `bash $SST3/<script>`.
+
 Usage:
   python scripts/check-crossrepo-paths.py                # Check for violations
   python scripts/check-crossrepo-paths.py --fix          # Show suggested fixes (dry-run)
   python scripts/check-crossrepo-paths.py --verbose      # Verbose output
+  python scripts/check-crossrepo-paths.py --matrix-only FILE...  # Matrix only (no prefix rule)
 
 Exit codes:
   0: No violations found
-  1: Violations found (BLOCKS commit)
+  1: Violations found (BLOCKS commit), or a file / the drift manifest could not be read
+  2: No scan root exists (manual run, mis-resolved layout)
 """
 
 import argparse
+import posixpath
 import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
 
+# c4:T68 (dotfiles#577 AC 3.8) — the execution-context matrix.
+#
+# Issue #7 shipped five successive forms of one SST3 script invocation, each
+# validated in the single context that motivated it: a bare `scripts/`
+# path exits 127 in a consumer repo, `../dotfiles/SST3/` exits 127 from any
+# worktree, a `$HOME`-anchored path resolves everywhere but reads the MAIN
+# clone from a dotfiles worktree, and its `~/DevProjects` spelling survives the
+# public-mirror transforms verbatim. The prefix rule in this file could see
+# none of them; it treats `../dotfiles/SST3/` as the correct form. The matrix
+# below resolves each invocation by path arithmetic over a modelled layout, so
+# the verdict is computed rather than asserted per form.
+_M_HOME = "/h"
+_M_DOTFILES = "/h/DevProjects/dotfiles"
+_M_CONSUMER = "/h/DevProjects/consumer"
+_M_WORKTREE = ".claude/worktrees/wt"
+# (context, working directory, the canon that context must run)
+MATRIX_CONTEXTS: Tuple[Tuple[str, str, str], ...] = (
+    ("dotfiles main", _M_DOTFILES, _M_DOTFILES),
+    ("dotfiles worktree", f"{_M_DOTFILES}/{_M_WORKTREE}", f"{_M_DOTFILES}/{_M_WORKTREE}"),
+    ("consumer main", _M_CONSUMER, _M_DOTFILES),
+    ("consumer worktree", f"{_M_CONSUMER}/{_M_WORKTREE}", _M_DOTFILES),
+)
+MATRIX_ROWS = ("execution", "public mirror")
+# The directories that hold an SST3 tree in the model.
+_M_CANON_ROOTS = frozenset({_M_DOTFILES, f"{_M_DOTFILES}/{_M_WORKTREE}"})
+# Files only the dotfiles repo runs need only its two cells.
+DOTFILES_ONLY_PREFIXES = (
+    "test-fixtures/", "tests/", "scripts/", "archive/",
+    "SST3-metrics/", "docs/research/", "tests/",
+)
+DOTFILES_ONLY_CELLS = ("dotfiles main", "dotfiles worktree")
+
+_INVOCATION_RE = re.compile(
+    r"\b(?:bash|sh|source|python3?)\s+[\"']?"
+    r"((?:\$\{?SST3\}?/|[^\s`'\"()|;&<>]*scripts/)[^\s`'\"()|;&<>]*)"
+)
+# `python3 -c "from SST3.scripts.<mod> import ..."` is the bare form spelt as
+# a module path: it imports only where the working directory holds SST3/.
+_MODULE_IMPORT_RE = re.compile(r"\bfrom\s+SST3\.scripts\.(\w+)\s+import\b")
+_RESOLVER_RE = re.compile(r"\$\{?SST3\}?/+")
+_HOME_RE = re.compile(r"(?:~|\$\{?HOME\}?)/")
+# The operator's filesystem layout, which a public mirror must not carry.
+_PRIVATE_LAYOUT_RE = re.compile(r"(?:~|\$\{?HOME\}?)/DevProjects\b|/home/[^/\s]+/")
+
+
+def resolve_invocation(token: str, cwd: str) -> str:
+    """Where `token` points when it runs from `cwd` in the modelled layout."""
+    m = _RESOLVER_RE.match(token)
+    if m:
+        # The Leader.md / SST3-solo.md resolver: the local canon when the
+        # working directory holds one, else the dotfiles clone under $HOME.
+        base = f"{cwd}/SST3/scripts" if cwd in _M_CANON_ROOTS else f"{_M_DOTFILES}/SST3/scripts"
+        return posixpath.normpath(f"{base}/{token[m.end():]}")
+    m = _HOME_RE.match(token)
+    if m:
+        return posixpath.normpath(f"{_M_HOME}/{token[m.end():]}")
+    if token.startswith("/"):
+        return posixpath.normpath(token)
+    return posixpath.normpath(f"{cwd}/{token}")
+
+
+def execution_cell(token: str, cwd: str, canon: str) -> str:
+    """`ok` when the invocation reaches `canon`, `wrong-canon` when it reaches
+    another clone's SST3 tree, `missing` when it reaches nothing (exit 127)."""
+    # A token that stops at the directory (`bash $SST3/<script>.sh`, where the
+    # `<` ends the token) is a placeholder: judge the directory it names.
+    target = resolve_invocation(token + "_" if token.endswith("/") else token, cwd)
+    if target.startswith(f"{canon}/scripts/"):
+        return "ok"
+    if any(target.startswith(f"{root}/scripts/") for root in _M_CANON_ROOTS):
+        return "wrong-canon"
+    return "missing"
+
+
 class CrossRepoPathChecker:
     """Validates cross-repo path format in SST3 markdown files."""
 
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, matrix_only: bool = False):
         """
         Initialize path checker.
 
         Args:
             verbose: Enable verbose output
+            matrix_only: Run only the execution-context matrix (c4:T68), not
+                the `../dotfiles/SST3/` prefix rule — for files outside SST3/
+                (`.claude/commands/`, `docs/guides/`, CLAUDE.md), where
+                repo-relative doc references are the house style.
         """
         self.verbose = verbose
+        self.matrix_only = matrix_only
+        # Public-mirror transform chains per canonical path, loaded from the
+        # drift manifest on the first invocation that needs one (c4:T68).
+        self._mirror_chains: Optional[Dict[str, List[Tuple[str, List[str]]]]] = None
         # Layout-invariant root resolution (dotfiles#552 AC 3.2).
         #
         # `scripts/` sits directly under the SST3 content root in BOTH layouts:
@@ -161,6 +266,97 @@ class CrossRepoPathChecker:
 
         return False
 
+    def _public_mirror_chains(self) -> Optional[Dict[str, List[Tuple[str, str, List[str]]]]]:
+        """(repo, path, transforms) of every public mirror, keyed by canonical
+        path. None when the drift manifest could not be read: that is recorded
+        as a probe failure, so the run fails instead of passing the mirror row
+        it never looked at."""
+        if self._mirror_chains is None:
+            try:
+                scripts_dir = Path(__file__).resolve().parent
+                if str(scripts_dir) not in sys.path:
+                    sys.path.insert(0, str(scripts_dir))
+                import sst3_mirror_utils
+                from sst3_utils import MIRROR_CLONES
+                manifest = sst3_mirror_utils.load_manifest(
+                    sst3_mirror_utils.find_manifest(scripts_dir)
+                )
+                chains: Dict[str, List[Tuple[str, str, List[str]]]] = {}
+                for entry, mirror in sst3_mirror_utils.iter_mirror_entries(manifest):
+                    # A `divergent` mirror is hand-maintained and pinned by
+                    # sha256, so its text is not derived from this line; the
+                    # mirror repo's own privacy gate reads it.
+                    if mirror["repo"] in MIRROR_CLONES and not mirror.get("divergent"):
+                        chains.setdefault(entry["canonical"], []).append(
+                            (mirror["repo"], mirror["path"], mirror.get("transforms") or [])
+                        )
+                self._apply_transforms = sst3_mirror_utils.apply_transforms
+                self._mirror_chains = chains
+            except Exception as e:  # any failure = could not look at the mirror row
+                self._mirror_chains = {}
+                self._mirror_error = f"drift manifest unreadable for the public-mirror row: {e}"
+                self.probe_failures.append(self._mirror_error)
+                print(f"SST3_PROBE_FAILED: check-crossrepo-paths — could not look: "
+                      f"{self._mirror_error}", file=sys.stderr)
+        return None if getattr(self, "_mirror_error", None) else self._mirror_chains
+
+    def mirror_cell(self, invocation: str, rel: str) -> str:
+        """`leak` when a public mirror's transform chain keeps the operator's
+        filesystem layout in the invocation, `ok` when none does, `n/a` when
+        the file has no public mirror, `unknown` when the manifest is unreadable."""
+        chains = self._public_mirror_chains()
+        if chains is None:
+            return "unknown"
+        mirrors = chains.get(rel, [])
+        if not mirrors:
+            return "n/a"
+        for repo, path, transforms in mirrors:
+            published = self._apply_transforms(
+                invocation, transforms, {"repo": repo, "canonical": rel, "path": path}
+            )
+            if _PRIVATE_LAYOUT_RE.search(published):
+                return "leak"
+        return "ok"
+
+    def invocation_matrix(self, token: str, invocation: str, rel: str) -> Dict[Tuple[str, str], str]:
+        """Every cell of {context} × {execution, public mirror} for one invocation."""
+        mirror = self.mirror_cell(invocation, rel)
+        cells: Dict[Tuple[str, str], str] = {}
+        for name, cwd, canon in MATRIX_CONTEXTS:
+            cells[("execution", name)] = execution_cell(token, cwd, canon)
+            # One published text serves every context that reads the mirror.
+            cells[("public mirror", name)] = mirror
+        return cells
+
+    def matrix_violations(self, line: str, line_num: int, rel: str) -> List[Dict]:
+        """c4:T68 — one violation per invocation that fails a cell its file needs."""
+        required = (DOTFILES_ONLY_CELLS if rel.startswith(DOTFILES_ONLY_PREFIXES)
+                    else tuple(name for name, _, _ in MATRIX_CONTEXTS))
+        found = []
+        calls = [(m.group(1), m.group(0)) for m in _INVOCATION_RE.finditer(line)]
+        calls += [(f"scripts/{m.group(1)}.py", m.group(0)) for m in _MODULE_IMPORT_RE.finditer(line)]
+        for token, invocation in calls:
+            cells = self.invocation_matrix(token, invocation, rel)
+            failing = [f"{row}: {ctx} ({v})" for (row, ctx), v in cells.items()
+                       if (row == "execution" and ctx in required and v != "ok")
+                       or (row == "public mirror" and v == "leak")]
+            if not failing:
+                continue
+            passing = [f"{row}: {ctx}" for (row, ctx), v in cells.items() if v == "ok"]
+            tail = (token.split("scripts/", 1)[1] if "scripts/" in token
+                    else _RESOLVER_RE.sub("", token, count=1))
+            found.append({
+                'file': rel,
+                'line': line_num,
+                'wrong_path': token,
+                'correct_path': f"$SST3/{tail}",
+                'line_content': line.strip(),
+                'kind': 'matrix',
+                'failing': failing,
+                'passing': passing,
+            })
+        return found
+
     def check_file(self, file_path: Path) -> List[Dict]:
         """
         Check a single markdown file for cross-repo path violations.
@@ -171,9 +367,12 @@ class CrossRepoPathChecker:
         Returns:
             List of violations found
         """
-        if file_path.name in self.excluded_files:
-            self.log(f"Skipping excluded file: {file_path.name}")
-            return []
+        # The prefix-rule exclusion. The matrix (c4:T68) still runs on these
+        # files: a template that propagates to every consumer is exactly where
+        # an invocation must resolve in every cell.
+        prefix_rule = not self.matrix_only and file_path.name not in self.excluded_files
+        if not prefix_rule:
+            self.log(f"Matrix only for {file_path.name}")
 
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -199,6 +398,12 @@ class CrossRepoPathChecker:
         for line_num, line in enumerate(lines, 1):
             # Skip if in wrong example block
             if self.is_in_wrong_example_block(lines, line_num - 1):
+                continue
+
+            # c4:T68 — before the prefix rule's exceptions, which accept
+            # `../dotfiles/SST3/`, the form that exits 127 from any worktree.
+            violations.extend(self.matrix_violations(line, line_num, relative_path.as_posix()))
+            if not prefix_rule:
                 continue
 
             # Check for exception patterns first (correct format)
@@ -334,6 +539,10 @@ class CrossRepoPathChecker:
             print(f"File: {file}")
             for v in file_violations:
                 print(f"  Line {v['line']}: `{v['wrong_path']}`")
+                if v.get('kind') == 'matrix':
+                    # c4:T68 — the matrix verdict is always shown: which cells fail is the finding.
+                    print(f"    matrix FAILS: {'; '.join(v['failing'])}")
+                    print(f"    matrix passes: {'; '.join(v['passing']) or 'none'}")
                 if show_fixes:
                     print(f"    Should be: `{v['correct_path']}`")
                     print(f"    Context: {v['line_content'][:80]}...")
@@ -403,10 +612,16 @@ Examples:
   python scripts/check-crossrepo-paths.py           # Check for violations
   python scripts/check-crossrepo-paths.py --fix     # Show suggested fixes
   python scripts/check-crossrepo-paths.py -v        # Verbose output
+  python scripts/check-crossrepo-paths.py --matrix-only .claude/commands/Leader.md
+
+Every SST3 script invocation is also checked in the matrix {dotfiles main,
+dotfiles worktree, consumer main, consumer worktree} x {execution, public
+mirror}; the form that passes every cell is `bash $SST3/<script>` (c4:T68).
 
 Exit Codes:
   0: No violations found
-  1: Violations found (blocks commit)
+  1: Violations found (blocks commit), or a file / the drift manifest could not be read
+  2: No scan root exists (manual run)
         """
     )
     parser.add_argument(
@@ -420,6 +635,12 @@ Exit Codes:
         help='Enable verbose output'
     )
     parser.add_argument(
+        '--matrix-only',
+        action='store_true',
+        help='Run only the execution-context matrix (c4:T68), not the '
+             '../dotfiles/SST3/ prefix rule — for files outside SST3/'
+    )
+    parser.add_argument(
         'files', nargs='*',
         help='Optional file list (from pre-commit pass_filenames). '
              'If empty, scans all SST3 doc directories.'
@@ -429,7 +650,7 @@ Exit Codes:
 
     file_list = [Path(f) for f in args.files] if args.files else None
 
-    checker = CrossRepoPathChecker(verbose=args.verbose)
+    checker = CrossRepoPathChecker(verbose=args.verbose, matrix_only=args.matrix_only)
     success = checker.validate(show_fixes=args.fix, files=file_list)
 
     sys.exit(0 if success else 1)

@@ -30,32 +30,34 @@ Every tier scans for these STANDARDS.md violations at increasing depth:
 
 ## Setup
 
-Ralph plugin pre-installed (user scope, cross-repo); verify via `/help` (look for `ralph-loop`). Uses the existing `Task` tool (model param) + `/ralph-loop` command — no extra install.
+No plugin. Each tier is one dispatch of the `ralph-review` subagent type, defined in `.claude/agents/ralph-review.md` with `Write` / `Edit` / `NotebookEdit` disallowed, so a reviewer cannot change the tree. The installer links that directory as `~/.claude/agents`, so the type resolves in every repo.
 
 ## Usage
 
-**Main agent invokes each tier (subagents must read STANDARDS.md + the tier checklist):**
+**Main agent dispatches each tier in the FOREGROUND, one at a time (each reviewer reads STANDARDS.md + its tier checklist):**
 
-```bash
+```text
 # Tier 1: Haiku surface checks
-Task(model=haiku): /ralph-loop "Review per SST3/standards/STANDARDS.md and SST3/ralph/haiku-review.md" --completion-promise "HAIKU_PASS"
+Agent(model=haiku, subagent_type=ralph-review, run_in_background=false, prompt="Review per SST3/standards/STANDARDS.md and SST3/ralph/haiku-review.md ...")
 
 # Tier 2: Sonnet logic checks
-Task(model=sonnet): /ralph-loop "Review per SST3/standards/STANDARDS.md and SST3/ralph/sonnet-review.md" --completion-promise "SONNET_PASS"
+Agent(model=sonnet, subagent_type=ralph-review, run_in_background=false, prompt="Review per SST3/standards/STANDARDS.md and SST3/ralph/sonnet-review.md ...")
 
 # Tier 3: Opus deep checks
-Task(model=opus): /ralph-loop "Review per SST3/standards/STANDARDS.md and SST3/ralph/opus-review.md" --completion-promise "OPUS_PASS"
+Agent(model=opus, subagent_type=ralph-review, run_in_background=false, prompt="Review per SST3/standards/STANDARDS.md and SST3/ralph/opus-review.md ...")
 ```
+
+A background dispatch returns at launch with no verdict, and each tier needs the previous tier's verdict, so every tier runs in the foreground.
 
 **Flow:**
 1. Main agent completes implementation
-2. Spawns Haiku subagent with Ralph
-3. If HAIKU_PASS → Spawns Sonnet
-4. If SONNET_PASS → Spawns Opus
-5. If OPUS_PASS → Ready for user approval
+2. Dispatches the Haiku tier
+3. Haiku PASS → dispatches Sonnet
+4. Sonnet PASS → dispatches Opus
+5. Opus PASS → Verification Loop (Gate 1), then merge, then user review
 6. If ANY FAIL → Main agent fixes → Restart from Haiku (restarts 1-3; restart 4 is NOT taken — escalate, then ONE further loop, then stop-and-report)
 
-**Max iterations**: the loop is bounded at 3 restarts, then escalates to a class-sweep and resumes for exactly ONE further loop; if that loop does not PASS, it STOPS and reports the outstanding findings + classes to the operator (terminal state, #567). The bound counts RESTARTS, not rounds. **The counter cannot observe either boundary for itself** — signal it: `sst3-ralph-restart-counter.sh --restart` at each restart, `--escalate` at the escalation (the only reset). Unsignalled the count stays 0 at any event volume, so the bound is never reached. See standards/stage-4/ralph-review.md for the canonical rule.
+**Max iterations**: the loop is bounded at 3 restarts, then escalates to a class-sweep and resumes for exactly ONE further loop; if that loop does not PASS, it STOPS and reports the outstanding findings + classes to the operator (terminal state, #567). The bound counts RESTARTS, not rounds. **The counter cannot observe either boundary for itself** — signal it: `sst3-ralph-restart-counter.sh --restart` at each restart, `--escalate` at the escalation (the only reset within a stage), `--stage5` once at Stage-5 entry (Stage 5's own loop; Stage 4's numbers are archived). Unsignalled the count stays 0 at any event volume, so the bound is never reached. See standards/stage-4/ralph-review.md for the canonical rule.
 
 ## Learn
 

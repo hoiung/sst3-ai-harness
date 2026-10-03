@@ -61,8 +61,9 @@ if ! command -v ast-grep >/dev/null 2>&1; then
     exit 127
 fi
 
-# Recall requires TWO complementary call-site shapes (#496). ast-grep matches
-# structurally, so a single pattern cannot cover both:
+# Recall requires TWO complementary call-site shapes (#496), plus a third for
+# JS/TS constructors and a command shape for bash (#577, below). ast-grep matches structurally, so a single
+# pattern cannot cover both:
 #   1. free-function / associated call:  SYMBOL(...)       — identifier callee
 #   2. method / receiver call:           RECV.SYMBOL(...)  — field-expression callee
 # Pre-#496 only shape 1 ran, so method calls (Rust `redis.write_ohlcv(...)`,
@@ -83,14 +84,36 @@ fi
 # not a pattern gap; the Leader.md raw-grep counter-query gate is the
 # compensating control for macro-heavy / test-assertion call sites.
 emit_call_sites() {
+    # $1 = an `ast-grep run` pattern; with $2 = rule, an inline YAML rule for
+    # `ast-grep scan` instead (the bash shape below needs a node kind).
     # #547 AC 6.1: buffer-then-check — the rc gate runs BEFORE jq sees the
     # stream (broken-engine garbage cannot crash jq or leak bare stderr).
     local ag_out ag_rc=0
     ag_out=$(mktemp)
-    ast-grep run --pattern "$1" --lang "$LANG" --json=stream > "$ag_out" 2>/dev/null || ag_rc=$?
+    if [[ "${2:-}" == rule ]]; then
+        ast-grep scan --inline-rules "$1" --json=stream > "$ag_out" 2>/dev/null || ag_rc=$?
+    else
+        ast-grep run --pattern "$1" --lang "$LANG" --json=stream > "$ag_out" 2>/dev/null || ag_rc=$?
+    fi
     ast_grep_check_rc "sst3-code-callers" "$ag_rc" || { rm -f "$ag_out"; exit 0; }
     jq -c '{file, line: (.range.start.line + 1), kind: "call"}' < "$ag_out"  # #547 AC 7.1: 1-indexed
     rm -f "$ag_out"
 }
+# Bash: a call is a command, `fn args` with no parentheses, so none of the
+# shapes below matches one: the wrapper answered 0 sites for every bash
+# function (#577 Gate 1: 19 real calls of `run_or_skip`). A command's name node
+# is the call; a definition's name, an argument and a comment are not. SYMBOL
+# has passed assert_safe_identifier, so with `.` escaped it is literal in the regex.
+if [[ "$LANG" == bash ]]; then
+    emit_call_sites "$(printf 'id: sst3-call\nlanguage: bash\nseverity: hint\nrule:\n  kind: command_name\n  regex: ^%s$\n' "${SYMBOL//./\\.}")" rule
+    exit 0
+fi
 emit_call_sites "${SYMBOL}(\$\$\$)"
 emit_call_sites "\$SST3_RECV.${SYMBOL}(\$\$\$)"
+# 3. JS/TS constructor call:  new SYMBOL(...) — a new_expression, not a
+#    call_expression, so neither shape above matches it (#577 AC 2.5: a
+#    TypeScript class with 22 references returned 0 sites). Disjoint from both
+#    shapes above, so it too is concatenated without dedup.
+case "$LANG" in
+    javascript|typescript|tsx) emit_call_sites "new ${SYMBOL}(\$\$\$)" ;;
+esac

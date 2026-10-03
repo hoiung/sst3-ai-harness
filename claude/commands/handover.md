@@ -56,14 +56,14 @@ no line is present (subagents never get one), say the context cannot be measured
 — never substitute another number.
 
 **Step 1 — Write the handover file to `~/handover`.**
-Write a new file `~/handover/handover_<repo-or-topic-slug>_<YYYY-MM-DD>.md`. For Issue-tied work, put the issue number in the slug (e.g. `handover_<repo>-<issue>-<topic>_<date>.md`). Optional light frontmatter (`name` / `description`) is fine for readability, but this is a `~/handover` working file, NOT a memory file — do not give it `metadata.node_type: memory`. (`~/handover` is created by the per-machine install; if it is somehow absent, the Write tool creates the parent directory anyway.)
+Write a new file `~/handover/handover_<repo-or-topic-slug>_<YYYY-MM-DD>.md`. For Issue-tied work, put the issue number in the slug (e.g. `handover_<repo>-<issue>-<topic>_<date>.md`). Optional light frontmatter (`name` / `description`) is fine for readability, but this is a `~/handover` working file, NOT a memory file — do not give it `metadata.node_type: memory`. (`~/handover` is created by the per-machine install; if it is somehow absent, the Write tool creates the parent directory anyway.) <!-- c4:T39 --> When a `/handover` re-writes an existing handover file (same slug), superseded `STATE` content collapses to one line per stage (tip SHA + what it settled), so the handover stays under ~25K tokens; the 8 field labels below are unchanged.
 
 The body uses these **8 field labels VERBATIM** (this is the authoring contract — do not rename, do not drop):
 
 1. `GOAL (verbatim)` — the operator's goal quoted word-for-word. Do NOT paraphrase. This is the single most important field; paraphrasing it is the #1 source of post-compact drift.
 2. `STATE` — what is DONE vs IN-PROGRESS, each line carrying an evidence anchor (commit SHA / test count / file:line). Not "auth is mostly done" — "auth login flow done (commit a1b2c3d, 7/7 tests pass); refresh-token path IN-PROGRESS (src/auth.py:88)".
-3. `NEXT ACTION` — the single concrete next step the reader should take first. One step, not a backlog.
-4. `ANCHORS` — the real file:line / artifact paths the reader must re-open to continue. Pointers to source, so the reader verifies rather than trusts the summary.
+3. `NEXT ACTION` — the single concrete next step the reader should take first. One step, not a backlog. When a sign-off pause may span the compact, NEXT ACTION carries the full 2b contract text verbatim (the files-changed table, the mechanism summary, the class-tagged out-of-scope list and every open decision — Stage-3 step 2b), because a pointer to it does not survive the compact.
+4. `ANCHORS` — the real file:line / artifact paths the reader must re-open to continue. Pointers to source, so the reader verifies rather than trusts the summary. <!-- c4:T71 --> In a worktree session, ANCHORS also records the worktree's untracked runtime environment (a local database name, untracked config files) beside the runner scripts that need it: `scripts/setup-worktree-deps.sh` links only `.venv` and `node_modules` and copies `.env`, so anything else is lost with the worktree.
 5. `DECISIONS` — decisions already made, each with its rationale AND what was RULED OUT (so the reader does not re-litigate or undo them).
 6. `CONSTRAINTS` — hard rules in force this session ("don't touch X", required format, branch safety) that would otherwise be lost with the conversation.
 7. `OPEN` — open questions / blockers genuinely undecided (so the reader knows what is settled vs not).

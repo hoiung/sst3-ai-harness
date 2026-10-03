@@ -48,19 +48,19 @@ for d in "${DIRS[@]}"; do
     [[ -z "$scan_out" ]] && continue
     while IFS= read -r line; do
         # Skip if subshell-protected (contains literal `(cd `).
-        if echo "$line" | grep -q '(cd '; then
+        if grep -q '(cd ' <<<"$line"; then
             continue
         fi
         # Strip the file:lineno: prefix from grep -n output to inspect content.
         content=$(echo "$line" | sed -E 's/^[^:]+:[0-9]+://')
         # Skip pure-comment lines (bash `#` or shell-script `# `).
-        if echo "$content" | grep -qE '^[[:space:]]*#'; then
+        if grep -qE '^[[:space:]]*#' <<<"$content"; then
             continue
         fi
         # Skip lines inside heredoc/string-literal contexts where `cd` is data
         # not a command. Heuristic: skip lines with backticks-only or single-quote
         # only context surrounding `cd`. Cheap detection of common false positives.
-        if echo "$content" | grep -qE '`cd [^&]+&& *git'; then
+        if grep -qE '`cd [^&]+&& *git' <<<"$content"; then
             continue
         fi
         violations+=("$line")

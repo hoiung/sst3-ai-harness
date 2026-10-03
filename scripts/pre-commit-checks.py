@@ -131,6 +131,7 @@ def validate_python_syntax(base_path: Path) -> Tuple[bool, str]:
     pre-commit speedup target per the audit.
     """
     import ast
+    import tokenize
     scripts_dir = base_path / 'SST3' / 'scripts'
     if not scripts_dir.exists():
         return True, "SST3/scripts not found (skipping)"
@@ -138,10 +139,19 @@ def validate_python_syntax(base_path: Path) -> Tuple[bool, str]:
     errors = []
     for py_file in scripts_dir.glob('*.py'):
         try:
-            source = py_file.read_text(encoding='utf-8', errors='replace')
+            # tokenize.open decodes the way `python3 file.py` does: the PEP 263
+            # cookie or UTF-8, STRICTLY. The text read with errors='replace'
+            # turned an undecodable byte into U+FFFD and passed a file python3
+            # refuses to run (#577 escalation, class C3). ast.parse on the raw
+            # bytes and py_compile both still accept a bad byte inside a
+            # comment (measured), so neither is a substitute.
+            with tokenize.open(py_file) as fh:
+                source = fh.read()
             ast.parse(source, filename=str(py_file))
-        except SyntaxError as e:
-            errors.append(f"  - {py_file.name}: line {e.lineno}: {e.msg}")
+        except UnicodeDecodeError as e:
+            errors.append(f"  - {py_file.name}: not decodable as its declared encoding: {e.reason} at byte {e.start}")
+        except (SyntaxError, ValueError) as e:
+            errors.append(f"  - {py_file.name}: line {getattr(e, 'lineno', '?')}: {getattr(e, 'msg', e)}")
         except OSError as e:
             errors.append(f"  - {py_file.name}: read failed: {e}")
 

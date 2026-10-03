@@ -8,7 +8,7 @@
 #          line is a 1-indexed editor line (#547 AC 7.1).
 #          function: subprocess.run|subprocess.Popen|subprocess.call|os.system|os.popen|Command::new|child_process.exec|child_process.execSync|child_process.spawn
 #          args_shape: "literal" | "interpolated" | "var" (best-effort static eyeball)
-# Engines: ast-grep (Python + Rust + JS pattern set)
+# Engines: ast-grep (Python + Rust + JS + TypeScript pattern set)
 #
 # Rationale (#447 Phase 8 — security audit coverage gap): pre-baked patterns
 # turn the security-audit scenario from "remember every shell-out form across
@@ -68,10 +68,11 @@ if [[ -n "$PATHS_FROM" ]]; then
         echo "ERROR: --paths-from file not readable: $PATHS_FROM" >&2
         exit 64
     fi
-    while IFS= read -r p; do
-        [[ -n "$p" ]] && ALLOWED_PATHS+=("$p")
-    done < <(read_paths_from "$PATHS_FROM")
+    load_paths_from "$PATHS_FROM" ALLOWED_PATHS
 fi
+# The engine scans the listed files themselves (sst3-bash-utils.sh paths_from_scan_targets).
+declare -a SCAN_TARGETS=()
+paths_from_scan_targets ALLOWED_PATHS SCAN_TARGETS
 
 path_allowed() {
     local file="$1"
@@ -99,28 +100,42 @@ JS_PATTERNS=(
     "javascript|child_process.execSync|child_process.execSync(\$\$\$)"
     "javascript|child_process.spawn|child_process.spawn(\$\$\$)"
 )
+# The same calls in TypeScript. ast-grep's javascript grammar does not read .ts files,
+# and the sst3-sec hook passes them, so until #577's escalation sweep a net-new
+# child_process.exec in a .ts file passed unscanned. ast-grep reads .tsx only under its
+# own tsx grammar, so the .tsx rows are separate (#577 Ralph r6 T3: the hook passes
+# every extension these grammars read, `.pre-commit-config.yaml` sst3-sec `files:`).
+TS_PATTERNS=(
+    "typescript|child_process.exec|child_process.exec(\$\$\$)"
+    "typescript|child_process.execSync|child_process.execSync(\$\$\$)"
+    "typescript|child_process.spawn|child_process.spawn(\$\$\$)"
+    "tsx|child_process.exec|child_process.exec(\$\$\$)"
+    "tsx|child_process.execSync|child_process.execSync(\$\$\$)"
+    "tsx|child_process.spawn|child_process.spawn(\$\$\$)"
+)
 
 declare -a SELECTED=()
 if [[ -z "$LANG_ARG" ]]; then
-    SELECTED=("${PY_PATTERNS[@]}" "${RS_PATTERNS[@]}" "${JS_PATTERNS[@]}")
+    SELECTED=("${PY_PATTERNS[@]}" "${RS_PATTERNS[@]}" "${JS_PATTERNS[@]}" "${TS_PATTERNS[@]}")
 else
     LANG_NORM=$(normalise_lang "$LANG_ARG")
     case "$LANG_NORM" in
         python) SELECTED=("${PY_PATTERNS[@]}") ;;
         rust) SELECTED=("${RS_PATTERNS[@]}") ;;
         javascript) SELECTED=("${JS_PATTERNS[@]}") ;;
+        typescript) SELECTED=("${TS_PATTERNS[@]}") ;;
         *)
-            echo "ERROR: sst3-sec-subprocess only supports python|rust|javascript (got: $LANG_NORM)" >&2
+            echo "ERROR: sst3-sec-subprocess only supports python|rust|javascript|typescript (got: $LANG_NORM)" >&2
             exit 64
             ;;
     esac
 fi
 
 emit_record() {
-    local file="$1" line="$2" func="$3" args_shape="$4"
+    local file="$1" line="$2" func="$3" args_shape="$4" end_line="${5:-$2}"
     if path_allowed "$file"; then
-        jq -nc --arg f "$file" --argjson l "$line" --arg fn "$func" --arg as "$args_shape" \
-            '{file:$f, line:$l, function:$fn, args_shape:$as}'
+        jq -nc --arg f "$file" --argjson l "$line" --argjson e "$end_line" --arg fn "$func" --arg as "$args_shape" \
+            '{file:$f, line:$l, end_line:$e, function:$fn, args_shape:$as}'
         SST3_EMITTED_COUNT=$((SST3_EMITTED_COUNT + 1))
     fi
 }
@@ -138,18 +153,20 @@ infer_args_shape() {
 
 AG_OUT=$(mktemp)
 for spec in "${SELECTED[@]}"; do
+    [[ ${#SCAN_TARGETS[@]} -gt 0 ]] || break  # a list naming no existing file: scan nothing
     IFS='|' read -r lang func pattern <<< "$spec"
     AG_RC=0
-    ast-grep run --pattern "$pattern" --lang "$lang" --json=stream > "$AG_OUT" 2>/dev/null || AG_RC=$?
+    run_over_targets "$AG_OUT" SCAN_TARGETS ast-grep run --pattern "$pattern" --lang "$lang" --json=stream || AG_RC=$?
     ast_grep_check_rc "sst3-sec-subprocess" "$AG_RC" || { rm -f "$AG_OUT"; exit 0; }
     while IFS= read -r record; do
         [[ -z "$record" ]] && continue
         file=$(jq -r '.file // ""' <<< "$record")
         line=$(jq -r '(.range.start.line + 1) // 0' <<< "$record")  # #547 AC 7.1: 1-indexed
+        end_line=$(jq -r '(.range.end.line + 1) // 0' <<< "$record")  # a call can span lines (#577)
         text=$(jq -r '.text // ""' <<< "$record")
         [[ -z "$file" ]] && continue
         shape=$(infer_args_shape "$text")
-        emit_record "$file" "$line" "$func" "$shape"
+        emit_record "$file" "$line" "$func" "$shape" "$end_line"
     done < "$AG_OUT"
 done
 rm -f "$AG_OUT"

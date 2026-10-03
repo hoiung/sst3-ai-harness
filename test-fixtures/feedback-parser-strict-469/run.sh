@@ -29,7 +29,7 @@ assert_clean() {
     local file="$1"
     local out
     set +e
-    out=$(python3 "$PARSER" "$file" --emit-ndjson --commit-sha test 2>/dev/null)
+    out=$(python3 "$PARSER" "$file" --emit-ndjson 2>/dev/null)
     local code=$?
     set -e
     if (( code != 0 )); then
@@ -53,7 +53,7 @@ assert_broken() {
     local file="$1"
     local out
     set +e
-    out=$(python3 "$PARSER" "$file" --emit-ndjson --commit-sha test 2>/dev/null)
+    out=$(python3 "$PARSER" "$file" --emit-ndjson 2>/dev/null)
     local code=$?
     set -e
     if (( code == 0 )); then

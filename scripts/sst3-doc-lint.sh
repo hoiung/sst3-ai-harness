@@ -92,7 +92,7 @@ fi
 # parser emits 0 records and the wrapper falsely declares "0 findings" with
 # exit 0. A single regex sweep on RAW catches the Node crash class before the
 # parser runs. Trigger: Node 18 + markdownlint-cli2@0.18+ (engines.node>=20).
-if printf '%s' "$RAW" | grep -qE '^(SyntaxError|TypeError|ReferenceError|RangeError):|^Cannot find module|^node:internal/modules'; then
+if grep -qE '^(SyntaxError|TypeError|ReferenceError|RangeError):|^Cannot find module|^node:internal/modules' <<<"$RAW"; then
     echo "ERROR: markdownlint-cli2 engine crashed (Node-level error in output) — NOT a clean run" >&2
     echo "sst3-doc-lint: ENGINE CRASHED (Node-level error) — do NOT treat as clean" >&2
     exit 2

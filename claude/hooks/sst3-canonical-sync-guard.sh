@@ -4,7 +4,8 @@
 # WHAT  Claude Code PreToolUse Bash matcher. Fires on:
 #         cargo build / cargo run / npm run build / sudo systemctl restart pb-*
 #       Checks whether the canonical clone is fast-forward-aligned with
-#       origin/main. If behind, WARN stderr — the deploy will run against
+#       origin/main. If behind, WARN via additionalContext (the agent channel —
+#       exit-0 stderr is debug-log only, dotfiles#577 AC 1.2) — the deploy will run against
 #       stale source (canonical's local main does NOT auto-update from a
 #       remote FF push; the runtime-feedback cost of that gap is captured in
 #       feedback_worktree_sync_canonical_before_deploy.md).
@@ -17,9 +18,10 @@
 #
 # CONTRACT  stdin = PreToolUse JSON; `.tool_input.command` read via jq.
 #       Fires only on `cargo build|run` / `npm run build` /
-#       `sudo systemctl restart pb-...`. Other commands → silent pass.
-#       jq absent → exit 1 (advisory; does NOT block).
-#       git binary absent → exit 1 (advisory).
+#       `sudo systemctl restart pb-...`. Other commands → silent pass (a builtin
+#       substring pre-filter, so the degrade notices below fire only on candidates).
+#       jq absent / git absent → exit 1 + JSON (operator systemMessage + agent
+#       additionalContext; advisory, does NOT block).
 #
 # REVERSIBLE  Remove the PreToolUse Bash matcher entry from claude/settings.json.
 set -uo pipefail
@@ -34,16 +36,25 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_lib-repo-identity.sh"
 sst3_scrub_git_env
 
-if ! command -v jq >/dev/null 2>&1; then
-  printf 'F-9 canonical-sync-guard: jq missing.\n' >&2
-  exit 1
-fi
-if ! command -v git >/dev/null 2>&1; then
-  printf 'F-9 canonical-sync-guard: git missing.\n' >&2
-  exit 1
-fi
+# shellcheck source=_lib-hook-output.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_lib-hook-output.sh"
 
 raw_stdin="$(cat 2>/dev/null || true)"
+# Cheap pre-filter (bash builtin): only cargo / npm / systemctl commands can fire.
+[[ "$raw_stdin" != *cargo* && "$raw_stdin" != *npm* && "$raw_stdin" != *systemctl* ]] && exit 0
+
+degraded() { # <why the check could not run, e.g. "jq is not installed">
+  printf 'F-9 canonical-sync-guard: %s.\n' "$1" >&2
+  sst3_hook_emit PreToolUse \
+    "F-9 canonical-sync-guard: $1, so the guard could not check whether the canonical clone is behind origin before this build/restart. Run git fetch and git status in the canonical clone yourself; if it is behind, pull --ff-only and rebuild." \
+    "F-9 canonical-sync-guard: $1 — stale-source check skipped."
+  exit 1
+}
+command -v jq >/dev/null 2>&1 || degraded 'jq is not installed'
+command -v git >/dev/null 2>&1 || degraded 'git is not installed'
+# An unparseable payload yields an empty CMD below, which would exit 0 as "nothing to check".
+printf '%s' "$raw_stdin" | jq empty 2>/dev/null || degraded 'the hook payload is not valid JSON'
+
 CMD="$(printf '%s' "$raw_stdin" | jq -r '.tool_input.command // empty' 2>/dev/null)"
 [[ -z "$CMD" ]] && exit 0
 
@@ -93,6 +104,7 @@ if [[ "$BEHIND" =~ ^[0-9]+$ ]] && [[ $BEHIND -gt 0 ]]; then
     "$CANONICAL_ROOT" "$BEHIND" "$DEFAULT_BRANCH" >&2
   printf '  The build/restart will run against STALE source.\n' >&2
   printf '  Suggested: git -C %s pull --ff-only origin %s\n' "$CANONICAL_ROOT" "$DEFAULT_BRANCH" >&2
+  sst3_hook_emit PreToolUse "F-9 canonical-sync-guard: the canonical clone ($CANONICAL_ROOT) is $BEHIND commits behind origin/$DEFAULT_BRANCH, so the build/restart you just ran used STALE source. Run git -C $CANONICAL_ROOT pull --ff-only origin $DEFAULT_BRANCH, then rebuild or restart."
 fi
 
 exit 0

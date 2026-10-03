@@ -41,8 +41,7 @@ from pathlib import Path
 # still return None) and the broad form does not re-recognise this branch
 # differently (no self-block).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sst3_utils import parse_solo_branch_issue  # noqa: E402
-PHASE_TRAILER_RE = re.compile(r"^Phase:\s*(\d+)\s*$", re.MULTILINE)
+from sst3_utils import PhaseTrailerError, parse_solo_branch_issue, read_phase_trailer  # noqa: E402
 PHASE_HEADING_RE = re.compile(r"^###\s+Phase\s+(\d+)")
 OTHER_H3_RE = re.compile(r"^###\s+(?!Phase\s+\d+)")
 H2_RE = re.compile(r"^##\s+")
@@ -71,8 +70,9 @@ def issue_num_from_branch(branch: str) -> int | None:
 
 
 def phase_from_message(msg: str) -> int | None:
-    m = PHASE_TRAILER_RE.search(msg)
-    return int(m.group(1)) if m else None
+    """The shared reader: the LAST `Phase:` line, its leading number (#577).
+    Raises PhaseTrailerError for a value with no number."""
+    return read_phase_trailer(msg)
 
 
 def fetch_issue_body(num: int) -> str | None:
@@ -125,17 +125,19 @@ def parse_phase_acs(body: str) -> dict[int, list[tuple[bool, str, bool]]]:
 def main() -> int:
     if len(sys.argv) < 2:
         return 0
-    try:
-        msg = Path(sys.argv[1]).read_text()
-    except OSError:
-        return 0
-
     branch = get_branch()
     issue = issue_num_from_branch(branch)
     if issue is None:
         return 0
 
-    phase = phase_from_message(msg)
+    # An unreadable message or a Phase value with no number stops the commit:
+    # both used to return 0, which skipped the cadence check (#577 escalation).
+    try:
+        msg = Path(sys.argv[1]).read_text(encoding="utf-8")  # sst3-sec: justified: the commit-msg hook's own argv, read as text
+        phase = phase_from_message(msg)
+    except (OSError, UnicodeDecodeError, PhaseTrailerError) as exc:
+        sys.stderr.write(f"sst3-phase-ac-cadence: cannot read the Phase trailer: {exc}\n")
+        return 1
     if phase is None or phase <= 1:
         return 0
 

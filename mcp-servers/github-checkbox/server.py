@@ -26,6 +26,10 @@ DEFAULT_REPO = os.environ.get("GITHUB_CHECKBOX_REPO", "OWNER/REPO")
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 2
 
+# A Proof of Work entry names its checkbox by the box text's first POW_LABEL_MAX
+# characters (see pow_label), not the whole text.
+POW_LABEL_MAX = 80
+
 mcp = FastMCP("github-checkbox")
 
 
@@ -47,7 +51,7 @@ def with_error_handling(func):
     return wrapper
 
 
-def run_gh_command(args: list[str], repo: str = None, skip_repo_flag: bool = False, retries: int = MAX_RETRIES) -> tuple[bool, str, str]:
+def run_gh_command(args: list[str], repo: str = None, skip_repo_flag: bool = False, retries: int = MAX_RETRIES, input: Optional[str] = None) -> tuple[bool, str, str]:
     """
     Run gh CLI command and return success status, stdout, and stderr.
 
@@ -56,6 +60,9 @@ def run_gh_command(args: list[str], repo: str = None, skip_repo_flag: bool = Fal
         repo: Repository in owner/repo format (None = use default)
         skip_repo_flag: If True, don't add --repo flag (for gh api commands)
         retries: Number of retry attempts for transient failures
+        input: Text fed to gh on stdin. Issue and comment bodies travel here,
+            never as an argv element: Linux rejects any single argument of
+            131,072 bytes or more (E2BIG), while GitHub accepts ~262K on edit.
 
     Returns:
         Tuple of (success, stdout, stderr)
@@ -71,8 +78,9 @@ def run_gh_command(args: list[str], repo: str = None, skip_repo_flag: bool = Fal
     for attempt in range(retries):
         try:
             log_debug(f"Running: gh {' '.join(cmd_args[:3])}... (attempt {attempt + 1}/{retries})")
-            result = subprocess.run(
+            result = subprocess.run(  # sst3-sec: justified: fixed gh argv, no shell; the caller's repo is one operand (after --repo or in the api path); body on stdin
                 ["gh"] + cmd_args,
+                input=input,
                 capture_output=True,
                 text=True,
                 timeout=60,  # Increased from 30s for large issues
@@ -147,8 +155,8 @@ def update_issue_body(issue_number: int, new_body: str, repo: str = None) -> tup
         Tuple of (success, error_message)
     """
     success, stdout, stderr = run_gh_command([
-        "issue", "edit", str(issue_number), "--body", new_body
-    ], repo)
+        "issue", "edit", str(issue_number), "--body-file", "-"
+    ], repo, input=new_body)
 
     if not success:
         return False, f"Failed to update Issue: {stderr}"
@@ -160,6 +168,10 @@ def parse_checkboxes(body: str) -> list[dict]:
     """
     Parse all checkboxes from Issue body.
 
+    Skips lines inside fenced code blocks (``` ... ```) so that
+    illustration / BEFORE-AFTER examples containing `- [ ]` do not
+    get counted as real checkboxes. (dotfiles#432 Stage 5 finding C#7.)
+
     Args:
         body: Issue body text
 
@@ -170,8 +182,15 @@ def parse_checkboxes(body: str) -> list[dict]:
 
     # Match both checked [x] and unchecked [ ] checkboxes
     pattern = r'^- \[([ x])\] (.+)$'
+    fence_pattern = re.compile(r'^\s*```')
 
+    in_fence = False
     for line in body.split('\n'):
+        if fence_pattern.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         match = re.match(pattern, line.strip())
         if match:
             checked = match.group(1).lower() == 'x'
@@ -211,20 +230,52 @@ def find_checkbox_line(body: str, checkbox_text: str) -> Optional[tuple[str, boo
     return None
 
 
+def pow_label(checkbox_text: str) -> str:
+    """
+    Name a checkbox in its Proof of Work entry: the box text, or for a longer box
+    its first POW_LABEL_MAX characters cut at a word boundary and marked with a
+    trailing ellipsis.
+
+    An entry that repeats the whole box text adds every ticked box to the body a
+    second time, and a long Issue then reaches GitHub's body cap with boxes still
+    open (dotfiles#577: 251,855 chars with 80 boxes left). A prefix still matches
+    its box (STANDARDS.md "Governance Evidence Signal"). The cut never leaves a
+    code span or a bold span open, which would swallow the evidence that follows;
+    if that would empty the label, the whole text is kept.
+    """
+    if len(checkbox_text) <= POW_LABEL_MAX:
+        return checkbox_text
+    cut = checkbox_text[:POW_LABEL_MAX]
+    space = cut.rfind(" ")
+    if space > 0:
+        cut = cut[:space]
+    # Repeat until both are balanced: dropping an open bold span can re-open a
+    # code span (`a **b` c), and each pass strictly shortens the cut.
+    while True:
+        for marker in ("`", "**"):
+            if cut.count(marker) % 2:
+                cut = cut[:cut.rfind(marker)]
+                break
+        else:
+            break
+    cut = cut.rstrip()
+    return f"{cut}…" if cut else checkbox_text
+
+
 def append_to_proof_of_work(body: str, checkbox_text: str, evidence: str) -> str:
     """
     Append evidence to Proof of Work section, creating it if needed.
 
     Args:
         body: Current Issue body
-        checkbox_text: Checkbox text
+        checkbox_text: Checkbox text (the entry carries pow_label of it)
         evidence: Evidence text
 
     Returns:
         Updated body with evidence appended
     """
     proof_header = "## Proof of Work"
-    evidence_entry = f"- **{checkbox_text}**: {evidence}"
+    evidence_entry = f"- **{pow_label(checkbox_text)}**: {evidence}"
 
     # Check if Proof of Work section exists
     if proof_header in body:
@@ -439,8 +490,8 @@ async def update_issue_comment(comment_id: int, body: str, repo: str = None) -> 
     success, stdout, stderr = run_gh_command([
         "api", "-X", "PATCH",
         f"repos/{effective_repo}/issues/comments/{comment_id}",
-        "-f", f"body={body}"
-    ], skip_repo_flag=True)  # gh api doesn't support --repo flag
+        "-F", "body=@-"
+    ], skip_repo_flag=True, input=body)  # gh api doesn't support --repo flag; -F @- keeps the body a string
 
     if not success:
         if "404" in stderr or "Not Found" in stderr:
@@ -519,6 +570,11 @@ async def health_check() -> str:
     return f"OK: {version}\nAuth: {auth_info}\nDefault repo: {DEFAULT_REPO}"
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console-script entry point (pyproject.toml `github-checkbox = "server:main"`)."""
     log_debug("Starting github-checkbox MCP server")
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

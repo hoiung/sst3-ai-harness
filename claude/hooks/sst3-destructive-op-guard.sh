@@ -214,8 +214,13 @@ merged_branch_delete() {
     BR_REASON="git is not available to check the merge state"
     return
   fi
+  # Not a repository at all: the set-head remedy below would only fail there.
+  if ! git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+    BR_REASON="$cwd is not inside a git repository"
+    return
+  fi
   if ! def="$(git -C "$cwd" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)" || [[ -z "$def" ]]; then
-    BR_REASON="origin's default branch is unresolvable in $cwd (no refs/remotes/origin/HEAD)"
+    BR_REASON="origin's default branch is unresolvable in $cwd (no refs/remotes/origin/HEAD; a repo made with git init + push has none: git remote set-head origin --auto)"
     return
   fi
   # origin/HEAD is a local symref anyone can repoint (`git symbolic-ref refs/remotes/origin/HEAD

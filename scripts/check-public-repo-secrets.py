@@ -157,6 +157,14 @@ PLATFORM_TOKEN_PATTERNS: List[Dict] = [
         "message": "JWT Token",
         "fix": "Move to .env (gitignored) and reference via environment variable",
     },
+    {
+        # Telegram Bot API token: numeric bot ID, a colon, then a 35-character
+        # secret that BotFather issues starting `AA` (groupwarden#1). Whoever
+        # holds it can read and post as the bot in every chat it is in.
+        "pattern": re.compile(r"(?<![0-9])[0-9]{8,10}:AA[A-Za-z0-9_-]{33}(?![A-Za-z0-9_-])"),
+        "message": "Telegram Bot API token",
+        "fix": "Move to the bot's secrets file (gitignored) and read it at runtime",
+    },
 ]
 
 PRIVATE_KEY_PATTERNS: List[Dict] = [
@@ -169,6 +177,13 @@ PRIVATE_KEY_PATTERNS: List[Dict] = [
         "pattern": re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----"),
         "message": "PGP private key block detected",
         "fix": "Never commit private keys. Use environment variable or secrets manager.",
+    },
+    {
+        # age (filippo.io/age) identity: Bech32, upper case, 58 data characters
+        # after the `1` separator (groupwarden#1 encrypts its backups with age).
+        "pattern": re.compile(r"AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}"),
+        "message": "age secret key detected",
+        "fix": "Never commit private keys. Keep the age identity off the repo and off the host it protects.",
     },
 ]
 
@@ -324,7 +339,30 @@ RESERVED_EMAIL_SUFFIXES: tuple = (
     ".example", ".invalid", ".test", ".localhost",
 )
 
+# WhatsApp address (JID) of a person, a group or a linked ID (groupwarden#1):
+# `447700900123@s.whatsapp.net`, `120363000000000000@g.us`,
+# `99999000000444@lid`. The first two are also email-shaped, but `@lid` is not,
+# and a JID is a phone number or member identifier, not a mailbox, so it gets
+# its own kind and message. It is listed BEFORE email so a JID line is reported
+# as one. Allowlisting is by exact literal (see is_pii_allowlisted).
+_WHATSAPP_JID_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+'-])"
+    r"[0-9]{5,20}(?:-[0-9]{5,20})?"
+    r"@(?:s\.whatsapp\.net|c\.us|g\.us|lid|newsletter|broadcast)"
+    r"(?![A-Za-z0-9-])"
+)
+
 PII_PATTERNS: List[Dict] = [
+    {
+        "kind": "whatsapp_jid",
+        "pattern": _WHATSAPP_JID_RE,
+        "message": "WhatsApp ID (phone number, group or member ID) detected",
+        "fix": (
+            "Remove it, or add the exact literal to .secret-pii-allowlist if it "
+            "is a synthetic fixture. Use Ofcom drama-range numbers "
+            "(447700900xxx@s.whatsapp.net) or obviously fake IDs in tests."
+        ),
+    },
     {
         "kind": "email",
         "pattern": _EMAIL_RE,
@@ -470,6 +508,11 @@ SCAN_EXTENSIONS: List[str] = [
     # 1200x630 PNGs, so anything pasted into a row ships as an image on the
     # site. Without this suffix the guard never opened them (hoiboy-uk#56).
     ".tsv",
+    # Go source + module file, SQL migrations and systemd units. groupwarden#1
+    # is a public Go service: without these its code, its schema and its deploy
+    # units were never opened, so a token pasted into a test fixture or a unit's
+    # Environment= line scored CLEAN.
+    ".go", ".mod", ".sql", ".service",
 ]
 
 # Credential-bearing config files that carry NO scannable extension. A suffix

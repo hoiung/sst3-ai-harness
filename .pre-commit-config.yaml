@@ -81,11 +81,14 @@ repos:
         args:
           - -c
           - |
+            # No dotfiles clone (an outside user of this repo): skip, as before. A clone that
+            # is present but not at its default branch is refused by --canon-current (exit 2)
+            # instead of compared: its files are not the canon (dotfiles#577 D1).
+            python3 -c 'import sys; sys.path.insert(0, "scripts"); import sst3_mirror_utils as m; m.find_manifest()' 2>/dev/null \
+              || { echo "SKIP: dotfiles not found — drift check skipped" >&2; exit 0; }
+            dot=$(python3 scripts/check-mirror-drift.py --canon-current --quiet) || exit 2
             for f in check-mirror-drift.py sst3_mirror_utils.py; do
-              CANONICAL=../dotfiles/SST3/scripts/$f
-              LOCAL=scripts/$f
-              [ -f "$CANONICAL" ] || { echo "SKIP: dotfiles not found — drift check skipped" >&2; exit 0; }
-              cmp -s "$LOCAL" "$CANONICAL" || { echo "ERROR: scripts/$f has drifted from canonical. Run: cp $CANONICAL $LOCAL" >&2; exit 1; }
+              cmp -s "scripts/$f" "$dot/SST3/scripts/$f" || { echo "ERROR: scripts/$f differs from $dot/SST3/scripts/$f. Sync it with propagate-mirrors.py --apply in dotfiles, from a clean worktree at origin's default branch; copying the file by hand skips the manifest." >&2; exit 1; }
             done
         language: system
         pass_filenames: false

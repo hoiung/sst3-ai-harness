@@ -1,8 +1,3 @@
-# [DOMAIN] Research Reference
-
-**Naming Convention**: `YYYY-MM-DD-topic-description-issue-NNN.md`
-**Example**: `2025-01-14-haiku-capabilities-issue-170.md`
-
 ---
 domain: [DOMAIN_NAME]
 type: [library|framework|api|protocol|tool|decision|process]
@@ -11,6 +6,7 @@ use_when: "[Brief description of when to use this research]"
 github_issue: [NNN]
 created_date: YYYY-MM-DD
 last_reviewed: YYYY-MM-DD
+last_updated: YYYY-MM-DD
 status: [active|review|deprecated|archived]
 deprecation_note: "[Reason if deprecated]"
 superseded_by: "[filename if replaced]"
@@ -34,6 +30,11 @@ dependencies:
 retention_policy: [time-based|event-based|permanent]
 archive_trigger: "[Condition for archival]"
 ---
+# [DOMAIN] Research Reference
+
+**Naming Convention**: `YYYY-MM-DD-topic-description-issue-NNN.md`
+**Example**: `2025-01-14-haiku-capabilities-issue-170.md`
+The frontmatter block starts on line 1.
 
 ## AI Task Lookup
 

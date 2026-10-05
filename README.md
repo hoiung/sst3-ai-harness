@@ -267,7 +267,7 @@ Replaces the upstream `better-code-review-graph` MCP server we previously adopte
 
 ### Claude Code Statusline
 
-A custom statusline (`claude/statusline.js`, 342 lines) that parses JSONL session transcripts in real-time, displaying token usage, git status, session duration, and CI/CD status. Provides the orchestrator with continuous situational awareness during long sessions.
+A custom statusline (`claude/statusline.js`) that parses JSONL session transcripts in real-time, displaying token usage, git status, session duration, and CI/CD status. Provides the orchestrator with continuous situational awareness during long sessions.
 
 ## Addressing the "Solo Project" Question
 

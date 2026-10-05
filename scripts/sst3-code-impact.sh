@@ -62,7 +62,21 @@ if ! command -v ast-grep >/dev/null 2>&1; then
     exit 127
 fi
 
-CHANGED=$(git diff --name-only "${BASE}...HEAD" -- '*.py' '*.ts' '*.tsx' '*.js' '*.jsx' '*.rs' 2>/dev/null || true)
+# git prints the changed names relative to the top of the work tree and the
+# caller index walks the cwd, so from a subdirectory every name failed the `-f`
+# test below and the run said nothing (#577 Stage 5 fix review R7). Work from
+# the top; outside a work tree the diff below fails and says so.
+if _sst3_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    cd -- "$_sst3_top"
+fi
+
+# #577 Stage 5 S14: the list ran through `2>/dev/null || true`, so a bad base was an
+# empty list and exit 0 with nothing said (nothing here validates the base); without
+# -z a quoted name was handed to ast-grep as `"caf\303\251.py"` and missed.
+if ! CHANGED="$(probe_names_or_fail "sst3-code-impact: changed files" -- \
+        git diff --name-only -z "${BASE}...HEAD" -- '*.py' '*.ts' '*.tsx' '*.js' '*.jsx' '*.rs')"; then
+    exit 2
+fi
 
 if [[ -z "$CHANGED" ]]; then
     exit 0

@@ -47,9 +47,16 @@ for arg in "${ARGS[@]+"${ARGS[@]}"}"; do
     fi
 done
 
-# Repo root for resolving paths cited in frontmatter
+# Cited paths are DevProjects-relative (`<repo>/<path>`). From a linked worktree the
+# DevProjects root is the MAIN clone's parent, not the worktree's: the worktree's
+# parent made every cite read missing. A cite of this repo (`<main clone name>/x`)
+# reads this checkout, so a branch's own files count and the shared clone's do not
+# (#577 Stage 5 K9).
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-DEVPROJECTS_ROOT=$(dirname "$REPO_ROOT")
+COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || printf '%s/.git' "$REPO_ROOT")
+MAIN_ROOT=$(dirname "$COMMON_DIR")
+DEVPROJECTS_ROOT=$(dirname "$MAIN_ROOT")
+OWN_PREFIX="$(basename "$MAIN_ROOT")/"
 
 MISSING_COUNT=0
 UNREADABLE_COUNT=0
@@ -85,9 +92,9 @@ for FILE in "${PATHS[@]+"${PATHS[@]}"}"; do
         continue
     fi
     rc=0
-    OUT=$(python3 - "$FILE" "$DEVPROJECTS_ROOT" <<'EOF'
+    OUT=$(python3 - "$FILE" "$DEVPROJECTS_ROOT" "$OWN_PREFIX" "$REPO_ROOT" <<'EOF'
 import sys, os, re, json
-file_path, dp_root = sys.argv[1], sys.argv[2]
+file_path, dp_root, own_prefix, own_root = sys.argv[1:5]
 try:
     with open(file_path, encoding="utf-8") as f:
         content = f.read()
@@ -123,7 +130,10 @@ for i, line in enumerate(fm.split('\n'), start=fm_start_line):
         m2 = re.match(r'^\s+-\s+file:\s*(\S.*)$', s)
         if m2:
             cited = m2.group(1).strip().strip('"\'')
-            full = os.path.join(dp_root, cited)
+            if cited.startswith(own_prefix):
+                full = os.path.join(own_root, cited[len(own_prefix):])
+            else:
+                full = os.path.join(dp_root, cited)
             print(json.dumps({"doc": file_path, "line": i, "claimed_path": cited, "exists": os.path.exists(full)}))
         elif re.match(r'^[a-z_]+\s*:', s):
             in_block = False

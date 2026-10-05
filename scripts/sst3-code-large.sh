@@ -69,6 +69,13 @@ LANG=$(normalise_lang "$2")
 # whose size exceeds the threshold. Approximate (does not parse YAML
 # frontmatter or fenced code blocks specially) but useful for hotspot scan.
 if [[ "$LANG" == "md" || "$LANG" == "markdown" ]]; then
+    # #577 Stage 5 S5: jq builds the records. awk printf'd the file name and heading
+    # straight into JSON, so a quote, backslash or tab in either printed an invalid
+    # record, and the heading had every `\` and `"` rewritten to `_`.
+    if ! command -v jq >/dev/null 2>&1; then
+        echo 'ERROR: jq not installed; see dotfiles/docs/guides/code-query-playbook.md "Wrapper-Script Lane > Install"' >&2
+        exit 127
+    fi
     find . -type f -name '*.md' \
         -not -path '*/node_modules/*' \
         -not -path '*/.venv/*' \
@@ -76,26 +83,24 @@ if [[ "$LANG" == "md" || "$LANG" == "markdown" ]]; then
         -not -path '*/.git/*' \
         -not -path '*/dist/*' \
         -not -path '*/build/*' \
-        2>/dev/null \
-        | while IFS= read -r FILE; do
-            awk -v file="$FILE" -v min="$MIN_LINES" '
+        -print0 2>/dev/null \
+        | while IFS= read -r -d '' FILE; do
+            awk -v min="$MIN_LINES" '
                 /^#{1,6} / {
                     if (last_heading_line && (NR - last_heading_line) >= min) {
-                        printf "{\"file\":\"%s\",\"name\":\"%s\",\"lines\":%d,\"kind\":\"large-md\"}\n",
-                            file, last_heading_text, NR - last_heading_line
+                        printf "%d\t%s\n", NR - last_heading_line, last_heading_text
                     }
                     last_heading_line = NR
                     last_heading_text = $0
                     sub(/^#+ */, "", last_heading_text)
-                    gsub(/[\\"]/, "_", last_heading_text)
                 }
                 END {
                     if (last_heading_line && (NR - last_heading_line + 1) >= min) {
-                        printf "{\"file\":\"%s\",\"name\":\"%s\",\"lines\":%d,\"kind\":\"large-md\"}\n",
-                            file, last_heading_text, NR - last_heading_line + 1
+                        printf "%d\t%s\n", NR - last_heading_line + 1, last_heading_text
                     }
                 }
-            ' "$FILE"
+            ' "$FILE" | jq -Rc --arg file "$FILE" \
+                'capture("^(?<n>[0-9]+)\t(?<name>.*)$") | {file: $file, name: .name, lines: (.n | tonumber), kind: "large-md"}'
         done
     exit 0
 fi

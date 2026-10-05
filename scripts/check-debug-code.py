@@ -7,6 +7,7 @@ Exit codes:
   0: No debug code found (PASS)
   1: Debug code detected (FAIL)
   3: Configuration error
+  4: A file could not be read (could not look; #577 Stage 5 S10)
 
 Usage:
   python check-debug-code.py <path>
@@ -27,11 +28,11 @@ fix_windows_console()
 DEFAULT_CONFIG = {
     "patterns": {
         "javascript": [
-            {"pattern": r"console\.(log|debug|warn|error|info)\(", "severity": "error", "message": "console.* statement"},
+            {"pattern": r"console\.(log|debug|warn|error|info)\(", "severity": "error", "message": "console.* statement", "output_channel": True},
             {"pattern": r"\bdebugger\b", "severity": "error", "message": "debugger statement"},
         ],
         "python": [
-            {"pattern": r"\bprint\s*\((?!.*# pylint: disable)", "severity": "warning", "message": "print() for debugging (use structured logger — AP #12)"},
+            {"pattern": r"\bprint\s*\((?!.*# pylint: disable)", "severity": "warning", "message": "print() for debugging (use structured logger — AP #12)", "output_channel": True},
             {"pattern": r"\bpdb\.set_trace\(\)", "severity": "error", "message": "pdb.set_trace()"},
             {"pattern": r"\bbreakpoint\(\)", "severity": "error", "message": "breakpoint()"},
             # AP #12 observability — only the unambiguous single-line silent-swallow forms.
@@ -62,19 +63,24 @@ DEFAULT_CONFIG = {
         "*/archive/*",
         "archive/*",
     ],
+    # Files never scanned at all.
     "allowed_files": [
-        "check-debug-code.py",  # This script itself
+        "check-debug-code.py",  # This script itself (its pattern text matches itself)
         "*/test_*.py",          # Test files can have print for test output
         "*/tests/*.py",
         "*_test.py",
-        # Verified Intentional #9 (#406): SST3/scripts/*.py are CLI tools that
-        # legitimately use print() for user-facing output. Carved out so the
-        # warning doesn't fire on hook scripts. Was previously in
-        # debug-patterns.yaml; now lives here in the canonical DEFAULT_CONFIG.
+    ],
+    # Files whose OUTPUT is the product: exempt from the `output_channel` patterns
+    # (print(), console.*) and from nothing else. Verified Intentional #9 (#406):
+    # SST3/scripts/*.py are CLI tools that legitimately print. Until #577 Stage 5 S10
+    # these sat in allowed_files, which skips the whole file, and pre-commit-checks.py
+    # scans only SST3/scripts: the AP #12 patterns (except: pass, return None, pdb)
+    # never read a single file.
+    "output_channel_files": [
         "SST3/scripts/*.py",
         "*/SST3/scripts/*.py",
         "claude/statusline.js",  # CLI tool uses console.log for output
-    ]
+    ],
 }
 
 def load_config(config_path: str = None) -> Dict:
@@ -102,10 +108,17 @@ def should_ignore(file_path: Path, ignore_patterns: List[str], allowed_files: Li
     """Thin wrapper. Delegates to sst3_utils.should_ignore_path (Phase 7 dedup, dotfiles#405)."""
     return should_ignore_path(file_path, ignore_patterns, allowed_files)
 
-def detect_debug_code(file_path: Path, patterns: Dict) -> List[Tuple[int, str, str, str]]:
+class UnreadableFile(Exception):
+    """A file on the scan list could not be read: could not look, never clean."""
+
+
+def detect_debug_code(file_path: Path, patterns: Dict,
+                      skip_output_channel: bool = False) -> List[Tuple[int, str, str, str]]:
     """
     Scan file for debug code patterns.
+    skip_output_channel drops the patterns flagged `output_channel` (print, console.*).
     Returns: List of (line_number, pattern_match, severity, message)
+    Raises UnreadableFile when the file cannot be read.
     """
     findings = []
 
@@ -125,6 +138,8 @@ def detect_debug_code(file_path: Path, patterns: Dict) -> List[Tuple[int, str, s
 
     # Get patterns for this file type + common patterns
     relevant_patterns = patterns.get(file_type, []) + patterns.get('common', [])
+    if skip_output_channel:
+        relevant_patterns = [p for p in relevant_patterns if not p.get('output_channel')]
 
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -140,8 +155,9 @@ def detect_debug_code(file_path: Path, patterns: Dict) -> List[Tuple[int, str, s
                             pattern_def['severity'],
                             pattern_def['message']
                         ))
-    except Exception as e:
-        print(f"Warning: Could not read {file_path}: {e}", file=sys.stderr)
+    except OSError as e:
+        # A "Warning" and carry on read an unreadable file as clean (#577 Stage 5 S10).
+        raise UnreadableFile(f"{file_path}: {e}") from e
 
     return findings
 
@@ -179,13 +195,22 @@ def main():
     severity_order = {'error': 3, 'warning': 2, 'info': 1}
     fail_threshold = severity_order[args.severity]
 
+    output_channel_files = config.get('output_channel_files', [])
+    scanned = 0
     for file_path in files_to_scan:
         # collect_source_files already filtered, but keep belt-and-braces
         # for the file-input path which bypasses the filter.
         if should_ignore(file_path, config['ignore_patterns'], config['allowed_files']):
             continue
 
-        findings = detect_debug_code(file_path, config['patterns'])
+        # should_ignore_path(path, [], allow) is True exactly when `allow` matches.
+        output_channel = bool(output_channel_files) and should_ignore(file_path, [], output_channel_files)
+        try:
+            findings = detect_debug_code(file_path, config['patterns'], skip_output_channel=output_channel)
+        except UnreadableFile as e:
+            print(f"[ERROR] check-debug-code: could not look: cannot read {e}", file=sys.stderr)
+            sys.exit(4)
+        scanned += 1
         if findings:
             all_findings[file_path] = findings
 
@@ -210,7 +235,7 @@ def main():
             print(f"PASS: Only {args.severity}-level issues found below threshold")
             sys.exit(0)
     else:
-        print("PASS: No debug code detected")
+        print(f"PASS: No debug code detected in {scanned} file(s)")
         sys.exit(0)
 
 if __name__ == '__main__':

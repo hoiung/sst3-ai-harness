@@ -339,13 +339,16 @@ enumerate_all_scan_targets() {
         return 0
     fi
     local tracked others
-    if ! tracked="$(probe_or_fail "sst3-code-secrets --all: tracked files" -- git ls-files)"; then
+    # -z (#577 Stage 5 S7): a name git would quote — a `"`, a `\`, a non-ASCII byte —
+    # came back as `"caf\303\251.py"`, failed the reader's `-f` test, and a leak in it
+    # was never read.
+    if ! tracked="$(probe_names_or_fail "sst3-code-secrets --all: tracked files" -- git ls-files -z)"; then
         return 1
     fi
     # `--exclude-standard` keeps .gitignore honoured, so .venv / node_modules
     # stay out; an ignored file cannot reach a remote, which is the risk this
     # scanner exists to bound.
-    if ! others="$(probe_or_fail "sst3-code-secrets --all: untracked files" -- git ls-files --others --exclude-standard)"; then
+    if ! others="$(probe_names_or_fail "sst3-code-secrets --all: untracked files" -- git ls-files -z --others --exclude-standard)"; then
         return 1
     fi
     printf '%s\n%s\n' "$tracked" "$others" | sed '/^$/d' | sort -u

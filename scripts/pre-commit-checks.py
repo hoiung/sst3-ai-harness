@@ -105,7 +105,8 @@ def check_observability(base_path: Path) -> Tuple[bool, str]:
     """
     script = base_path / 'SST3' / 'scripts' / 'check-debug-code.py'
     if not script.exists():
-        return True, "check-debug-code.py not found (skipping observability check)"
+        # A missing checker passed the gate (#577 Stage 5 S10): could not look.
+        return False, f"[BLOCKED] check-debug-code.py not found at {script} — the observability check could not run (AP #12)"
 
     # Scope to SST3/scripts/ — the AP #12 enforcement target.
     # Statusline.js, markitdown, mcp-server logs are intentional output channels
@@ -117,7 +118,8 @@ def check_observability(base_path: Path) -> Tuple[bool, str]:
         "Observability/debug-code check"
     )
 
-    # check-debug-code.py: 0=clean, 1=violations, 2=argparse error, 3=config error
+    # check-debug-code.py: 0=clean, 1=violations, 2=argparse error, 3=config error,
+    # 4=a file could not be read
     if returncode != 0:
         return False, f"[BLOCKED] Observability check failed (rc={returncode}, AP #12):\n{stdout}\n{stderr}"
     return True, f"Observability check: PASSED\n{stdout}"

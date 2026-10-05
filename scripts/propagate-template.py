@@ -9,6 +9,7 @@ USAGE:
 
     # Propagate to all configured repos
     python propagate-template.py --all
+    #   (#577 K8: --all writes consumers only from a clean worktree at origin's default branch, after the Gate-2 merge)
 
     # Dry run (show what would change)
     python propagate-template.py --repo ../<consumer-public-2> --dry-run
@@ -18,6 +19,7 @@ USAGE:
     # NOT touch unless you know what you're doing — Issue #493 AC 1.4).
     python propagate-template.py --all --target-claude CLAUDE.md \\
         --marker '<!-- ⚠️ DO NOT MODIFY OR DELETE ANYTHING ABOVE THIS LINE ⚠️ -->'
+    #   (same K8 rule as --all above: a clean origin-default worktree only)
 
 SAFETY:
     - Extracts SST3 section from CLAUDE_TEMPLATE.md (everything above boundary)
@@ -35,6 +37,8 @@ BOUNDARY MARKER:
 """
 
 import argparse
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -337,6 +341,23 @@ def propagate_to_repo(
         return False, False
 
 
+def _home_clone(path: Path) -> Path:
+    """The main clone a --repo path belongs to (itself unless it is a linked worktree).
+
+    GIT_* is dropped (AP #31): an inherited GIT_DIR made git answer for the calling
+    repository, so a real consumer read as a non-fleet fixture and skipped K8 (#577
+    Stage 5 fix review r2)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        common = subprocess.run(  # sst3-sec: justified: fixed git argv, the caller's --repo path as the -C operand, no shell
+            ["git", "-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, check=True, env=env,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return path.resolve()
+    return Path(common).resolve().parent
+
+
 def main():
     """Main entry point for script."""
     parser = argparse.ArgumentParser(
@@ -352,6 +373,7 @@ Examples:
 
     # Propagate to all configured repos
     python propagate-template.py --all
+    #   (#577 K8: --all writes consumers only from a clean worktree at origin's default branch, after the Gate-2 merge)
 
 Safety features:
     - Verifies project content not lost
@@ -437,6 +459,23 @@ Safety features:
     dotfiles_self_row_root = _smu.resolve_self_row_destination(
         manifest_path, "dotfiles", "CLAUDE.md"
     ).parent.resolve()
+    # K8 (#577 Stage 5): writing fleet CLAUDE.md sections needs merged canon. A
+    # --repo write to the self-row lands in this tree, and a --repo outside the
+    # fleet directory (a test fixture) is not a consumer: both are exempt. A
+    # consumer's linked worktree (<consumer>/.claude/worktrees/x) is judged by the
+    # main clone it belongs to: by its own parent it looked like a fixture, so a
+    # solo branch's bytes reached that consumer's master when the worktree merged
+    # (fix review R50).
+    _fleet_target = bool(args.all) or (
+        bool(args.repo)
+        and Path(args.repo).resolve() != dotfiles_self_row_root
+        and _home_clone(Path(args.repo)).parent == main_clone.parent.resolve()
+    )
+    if not args.dry_run and _fleet_target:
+        _problem = _smu.propagation_source_problem(manifest_path)
+        if _problem:
+            print(f"[ERROR] {_problem}", file=sys.stderr)
+            sys.exit(2)
     template = args.template if args.template else (
         template_src_root / "SST3" / "templates" / "CLAUDE_TEMPLATE.md"
     )

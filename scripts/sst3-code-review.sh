@@ -74,6 +74,16 @@ fi
 
 BASE="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The changed names below are relative to the top of the work tree, and so are the
+# .coverage data and the impact leg's records: work from the top, or a subdirectory
+# cwd reads as "no impact-scoped files" (#577 Stage 5 fix review R7). A relative
+# SST3_REVIEW_NDJSON keeps meaning the caller's cwd.
+if [[ -n "${SST3_REVIEW_NDJSON:-}" && "$SST3_REVIEW_NDJSON" != /* ]]; then
+    SST3_REVIEW_NDJSON="$PWD/$SST3_REVIEW_NDJSON"
+fi
+if _sst3_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    cd -- "$_sst3_top"
+fi
 # #447 Phase 3 (Shape 7): fixed `/tmp/review.ndjson` raced multi-shell. Default
 # to mktemp; SST3_REVIEW_NDJSON overrides (test fixtures + deterministic dev).
 OUT="${SST3_REVIEW_NDJSON:-$(mktemp -t sst3_review.XXXXXX.ndjson)}"
@@ -110,7 +120,10 @@ fi
 # divergent base. Counting changed files off the engine's own range is
 # definitionally aligned. BASE is ref-validated above, so an empty list here is a
 # genuine empty range, not a bad ref.
-CHANGED_FILES=$(git diff --name-only "${BASE}...HEAD" 2>/dev/null || true)
+# #577 Stage 5 S14: -z and a checked rc, not `2>/dev/null || true`.
+if ! CHANGED_FILES="$(probe_names_or_fail "sst3-code-review: changed files" -- git diff --name-only -z "${BASE}...HEAD")"; then
+    exit 2
+fi
 if [[ -z "$CHANGED_FILES" ]]; then
     EMPTY_NOTE="no changed files in ${BASE}...HEAD; nothing to review"
     jq -nc --arg b "$BASE" --arg note "$EMPTY_NOTE" \
@@ -174,7 +187,11 @@ fi
 # duplicate evaluation — of the COVERAGE PRECONDITION, which the intermediate
 # cut tested twice (once to emit the skip, once to guard the real path).
 # `$CHANGED` itself was only ever evaluated once.
-CHANGED=$(git diff --name-only "${BASE}...HEAD" -- '*.py' 2>/dev/null || true)
+# -z (#577 Stage 5 S14): the membership test below compares these names with the
+# untested-py records' raw `.file`; a quoted name matched nothing and read as covered.
+if ! CHANGED="$(probe_names_or_fail "sst3-code-review: changed Python files" -- git diff --name-only -z "${BASE}...HEAD" -- '*.py')"; then
+    exit 2
+fi
 if [[ -n "$CHANGED" ]]; then
     if [[ ! -f .coverage ]] || ! command -v coverage >/dev/null 2>&1; then
         if [[ ! -f .coverage ]]; then

@@ -18,6 +18,7 @@
 #   sst3_solo_branch_alt <issue>             — canonical solo-branch ERE alternation (#509 AC6.5)
 #   ast_grep_check_rc <wrapper> <rc> [engine] — discriminate broken engine from benign empty (#547 AC 6.1)
 #   probe_or_fail [--numeric] <label> -- <cmd...>
+#   probe_names_or_fail <label> -- <cmd -z...> — NUL-separated names, one per line (#577)
 #                                            — run a probe; echo its stdout, or return 1 loudly
 #                                              rather than substituting a clean-looking default (#565 AC 5.1)
 #
@@ -187,6 +188,19 @@ load_paths_from() {
 # A listed path that no longer exists (deleted in the diff) has nothing to scan and is
 # left out, so an empty result with a list given means SCAN NOTHING: the caller must
 # skip its engine call, because an engine handed no path reads `.`.
+# _pst_git_marker_above — true iff a `.git` (a repository dir, or a linked worktree's
+# gitdir file) sits at or above $PWD. Asked of the file system, not of git, for the case
+# where git refuses the repository outright.
+_pst_git_marker_above() {
+    local d
+    d="$(pwd -P)" || return 1
+    while :; do
+        [[ -e "$d/.git" ]] && return 0
+        [[ "$d" == / ]] && return 1
+        d="$(dirname -- "$d")"
+    done
+}
+
 paths_from_scan_targets() {
     local -n _pst_in="$1" _pst_out="$2"
     _pst_out=()
@@ -209,6 +223,17 @@ paths_from_scan_targets() {
             while IFS= read -r -d '' _pst_p; do
                 [[ -f "$_pst_p" ]] && _pst_out+=("$_pst_p")
             done <"$_pst_list"
+        elif [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]] || _pst_git_marker_above; then
+            # git failed INSIDE a work tree (e.g. an unreadable index). Walking `.` here
+            # was the very walk this function replaced, and it passed as a clean scan
+            # (#577 Stage 5 S1): could not look, rc 2. A failure that refuses the whole
+            # repository (a malformed .git/config, "detected dubious ownership") also
+            # fails rev-parse, so a `.git` at or above $PWD answers it without git
+            # (#577 Stage 5 fix review R1/R43).
+            rm -f "$_pst_list"
+            printf '%s: paths_from_scan_targets — could not look: `git ls-files` failed inside the work tree %s\n' \
+                "$SST3_PROBE_FAILED_MARKER" "$PWD" >&2
+            return 2
         else
             _pst_out=(.)
         fi
@@ -317,8 +342,13 @@ activate_paths_from_filter() {
     # record's path goes through the same `canon` as the list (a ripgrep record says
     # `./path`; a wrapper given an absolute target prints `$PWD/path`, which before
     # #577 Ralph r4 matched nothing once the list side dropped its `$PWD/` prefix).
-    exec > >(jq -c --arg cwd "$PWD/" --argjson allowed "$pattern" "$SST3_JQ_CANON_PATH"'
-        if (.file? // null) == null then . else select((.file | canon) as $f | $allowed | index($f) != null) end')
+    # Each LINE is parsed on its own (#577 Stage 5 S5): reading the stream as JSON, jq
+    # stopped at the first line that was not JSON and every record after it was lost
+    # without a word. A non-JSON line now becomes an error record and the rest flow.
+    exec > >(jq -cR --arg cwd "$PWD/" --argjson allowed "$pattern" "$SST3_JQ_CANON_PATH"'
+        select(test("\\S"))
+        | . as $line | (try fromjson catch {kind: "sst3-paths-from-filter-error", reason: "a line on stdout was not JSON; passed through unfiltered", text: $line})
+        | if (.file? // null) == null then . else select((.file | canon) as $f | $allowed | index($f) != null) end')
 }
 
 # --- could-not-look contract (#565 AC 5.1) --------------------------------
@@ -390,6 +420,42 @@ probe_or_fail() {
         return 1
     fi
     printf '%s' "$out"
+    return 0
+}
+
+# probe_names_or_fail <label> -- <command printing NUL-separated names...> — print the
+# names one per line, raw. Pass the command its -z. Without -z git C-quotes a name that
+# holds a quote, a backslash, a control character or a non-ASCII byte
+# ("caf\303\251.py"), and a caller testing that string with `[[ -f ]]` or matching it
+# against a list skips the real file without a word (#577 Stage 5 S7/S14/S15). A failed
+# command, or a name holding a newline (it cannot be one line), is could-not-look: the
+# SST3_PROBE_FAILED diagnostic and rc 1, as probe_or_fail. Usage, as probe_or_fail:
+#     if ! names="$(probe_names_or_fail "x: tracked files" -- git ls-files -z)"; then ...
+probe_names_or_fail() {
+    local label="${1:-<unlabelled>}"; shift || true
+    if [[ "${1:-}" == "--" ]]; then shift; fi
+    local out errfile rc=0 name
+    if ! out="$(mktemp)" || ! errfile="$(mktemp)"; then
+        printf '%s: %s — could not look: mktemp failed\n' "$SST3_PROBE_FAILED_MARKER" "$label" >&2
+        return 1
+    fi
+    "$@" >"$out" 2>"$errfile" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        printf '%s: %s — could not look: `%s` exited %s: %s\n' \
+            "$SST3_PROBE_FAILED_MARKER" "$label" "$*" "$rc" "$(tr '\n' ' ' < "$errfile" | cut -c1-300)" >&2
+        rm -f -- "$out" "$errfile"
+        return 1
+    fi
+    while IFS= read -r -d '' name; do
+        if [[ "$name" == *$'\n'* ]]; then
+            printf '%s: %s — could not look: a name holds a newline, so it cannot be listed one per line: %q\n' \
+                "$SST3_PROBE_FAILED_MARKER" "$label" "$name" >&2
+            rm -f -- "$out" "$errfile"
+            return 1
+        fi
+        printf '%s\n' "$name"
+    done < "$out"
+    rm -f -- "$out" "$errfile"
     return 0
 }
 

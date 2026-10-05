@@ -57,16 +57,39 @@ done
 # are read NUL-delimited so a newline in a name cannot split it.
 # #447 Phase 3: -P prevents symlink-following (defensive against any malicious
 # symlink in docs/research/).
+# A README.md is usually the folder's index and guide, not a research reference,
+# so it carries no reference frontmatter (#577 T3). It is skipped, and said, only
+# when line 1 is not the `---` that opens a frontmatter block: a README.md that
+# opens one IS a reference (consumers keep `docs/research/<topic>/README.md`) and
+# is checked like any other file (#577 Stage 5 fix review R5). "Opens" means what the
+# validator below reads (`^---\s*\n`): `---` and any trailing blanks, a CR among them;
+# `--- ` was an index here and an opening for every other file (fix review 2).
+is_index_readme() {
+    local first=""
+    [[ "${1##*/}" == README.md && -f "$1" && -r "$1" ]] || return 1
+    IFS= read -r first < "$1" || true
+    first="${first%"${first##*[![:space:]]}"}"
+    [[ "$first" != "---" ]]
+}
 PATHS=()
+SKIPPED_COUNT=0
+add_path() {
+    if is_index_readme "$1"; then
+        printf 'sst3-doc-frontmatter: skipped %s (a folder index, not a research reference: line 1 does not open a frontmatter block)\n' "$1" >&2
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+    else
+        PATHS+=("$1")
+    fi
+}
 if [[ ${#ARGS[@]} -eq 0 ]]; then
     [[ -d docs/research ]] && ARGS=(docs/research)
 fi
 for arg in "${ARGS[@]+"${ARGS[@]}"}"; do
     if [[ -d "$arg" && ! -L "$arg" ]]; then
         mapfile -d '' -t FOUND < <(find -P "$arg" -name '*.md' -type f -print0)
-        PATHS+=("${FOUND[@]+"${FOUND[@]}"}")
+        for f in "${FOUND[@]+"${FOUND[@]}"}"; do add_path "$f"; done
     else
-        PATHS+=("$arg")
+        add_path "$arg"
     fi
 done
 
@@ -76,7 +99,7 @@ UNREADABLE_COUNT=0
 # Universal "I ran" sentinel — emit on every exit path (#447 Phase 2, silent-zero
 # class fix). Without this, a missing docs/research/ directory (or zero matches)
 # produced exit 0 + no stderr, indistinguishable from "all valid".
-trap 'printf "sst3-doc-frontmatter: scanned %d path(s), %d invalid record(s), %d unreadable\n" "${#PATHS[@]}" "${INVALID_COUNT:-0}" "${UNREADABLE_COUNT:-0}" >&2' EXIT
+trap 'printf "sst3-doc-frontmatter: scanned %d path(s), %d invalid record(s), %d unreadable, %d index README(s) skipped\n" "${#PATHS[@]}" "${INVALID_COUNT:-0}" "${UNREADABLE_COUNT:-0}" "${SKIPPED_COUNT:-0}" >&2' EXIT
 
 SST3_EMITTED_COUNT="${SST3_EMITTED_COUNT:-0}"
 on_sigterm() {

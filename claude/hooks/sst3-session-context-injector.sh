@@ -43,8 +43,16 @@ MODE="${1:-live}"
 # parse below can use it — a grep/sed parse of raw JSON mis-reads escaped quotes and
 # nested keys, and there is no reason to hand-roll a parser when jq is already required.
 if ! command -v jq >/dev/null 2>&1; then
-  # Degraded path — emit empty envelope so SessionStart does not stall.
-  printf '{}\n'
+  # Degraded path: never stall SessionStart, but SAY what was not loaded. An empty `{}` was
+  # indistinguishable from "nothing to inject", so a post-compact session resumed with no
+  # task, no Issue and no re-read directive and no word why (#577 Stage 5 H5). The text is
+  # a fixed ASCII literal, so printf emits valid JSON without jq.
+  DEGRADED_MSG='SST3 session context NOT loaded: jq is not installed, so the operator task, the active Issue and the post-compact reading list were not injected. Install jq (apt install jq). Until then read CLAUDE.md, STANDARDS.md and this repo pointer ~/handover/current-task-<repo>.txt yourself before acting.'
+  if [[ "$MODE" == "--test" ]]; then
+    printf '{"additionalContext":{"degraded":"%s"}}\n' "$DEGRADED_MSG"
+  else
+    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$DEGRADED_MSG"
+  fi
   exit 0
 fi
 

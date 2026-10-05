@@ -19,7 +19,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from sst3_utils import get_staged_files, KNOWN_REPOS, SST3UtilError, BOUNDARY_MARKER, log_event  # F2.13
+from sst3_utils import get_staged_files, KNOWN_REPOS, SST3UtilError, BOUNDARY_MARKER  # F2.13
+
+# #577 K8 / fix review R49: propagate-template --all writes consumer files, so it refuses
+# every tree but a clean worktree at origin's default branch; the remedy says where.
+FLEET_RUN = ("python scripts/propagate-template.py --all   (in dotfiles after the Gate-2 "
+             "merge, from a clean worktree at origin's default branch under .claude/worktrees/; "
+             "it refuses any other tree, #577 K8)")
 
 # Repositories to validate (relative to dotfiles parent directory).
 # Sourced from sst3_utils.KNOWN_REPOS — single source of truth.
@@ -66,45 +72,6 @@ def run_dry_run_propagation():
     except Exception as e:
         return False, f"[ERROR] Failed to run dry-run: {e}"
 
-
-def ask_user(question, default='n'):
-    """
-    Ask user a yes/no/skip question.
-
-    Args:
-        question: Question to ask
-        default: Default answer ('y' or 'n')
-
-    Returns:
-        True for yes, False for no, None for skip
-    """
-    if not sys.stdin.isatty():
-        # F1.12 (#406 Phase 9): structured log when non-tty fallback fires.
-        # The original commit kept a plain print(); audit caught it as a
-        # missing observability point.
-        log_event(
-            "check-propagation.py",
-            "ask_user_non_tty_default",
-            level="info",
-            question=question,
-            default=default,
-        )
-        print(f"   (Non-interactive mode, using default: {default})")
-        return default == 'y'
-
-    prompt = f"{question} [y/N/skip]: " if default == 'n' else f"{question} [Y/n/skip]: "
-
-    try:
-        response = input(prompt).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print("\n   (Skipping due to interrupt)")
-        return None
-
-    if response == 'skip':
-        print("   Skipping propagation check this time.")
-        return None
-
-    return response in ['y', 'yes'] if default == 'n' else response not in ['n', 'no']
 
 
 def extract_sst3_section(file_path):
@@ -212,48 +179,6 @@ def validate_sst3_sections():
     return len(mismatches) == 0, mismatches
 
 
-def propagate_now():
-    """
-    Run propagation script for real (non-dry-run mode).
-
-    AP #16 (dotfiles#406 F1.11): subprocess cleanup in finally so any
-    exception path (not just TimeoutExpired) reaps the child process.
-
-    Returns:
-        True if successful, False otherwise
-    """
-    script_dir = Path(__file__).parent.resolve()
-    script = script_dir / 'propagate-template.py'
-
-    proc = None
-    try:
-        proc = subprocess.Popen(
-            [sys.executable, str(script), '--all'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        stdout, _ = proc.communicate(timeout=120)
-        if stdout:
-            print(stdout)
-        return proc.returncode == 0
-    except subprocess.TimeoutExpired:
-        print("\n[ERROR] Propagation timed out")
-        return False
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(
-            f"\n[ERROR] Failed to run propagation: "
-            f"{type(exc).__name__}: {exc}"
-        )
-        return False
-    finally:
-        if proc and proc.poll() is None:
-            proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-
 
 def main():
     """Main entry point for pre-commit hook."""
@@ -267,18 +192,26 @@ def main():
     valid, mismatches = validate_sst3_sections()
 
     if not valid:
+        template_changed, _ = check_template_changed()
         print("\n[ERROR] SST3 section mismatch detected!")
         print("\nThe following repositories have SST3 sections that don't match CLAUDE_TEMPLATE.md:")
         for repo in mismatches:
             print(f"   - {repo}")
-        print("\n[CAUSE] Someone modified the SST3-managed section (above the boundary marker)")
-        print("        instead of just the project-specific section.")
-        print("\n[FIX] Run propagation to sync SST3 sections:")
-        # AP #22: prefer `git -C` / module form over bare cd to avoid CWD leak
-        # (bare `cd dotfiles` was the prior suggestion; replaced #460 Phase 9 AC 9.5).
-        print("      python -m SST3.scripts.propagate-template --all")
-        print("      # or, equivalently: (cd dotfiles && python scripts/propagate-template.py --all)")
-        print("\n      Then review and commit the changes in each repository.")
+        if template_changed:
+            # A branch that edits the template always lands here, and K8 forbids the
+            # consumer write before the merge (#577 Stage 5 fix review r2: the message
+            # blamed a hand edit and named a fix that cannot unblock this commit).
+            print("\n[CAUSE] This commit changes CLAUDE_TEMPLATE.md; consumers take it only")
+            print("        after the Gate-2 merge (#577 K8), so they differ until then.")
+            print("\n[FIX] On the branch, skip this hook by id with its reason in the commit")
+            print("      message: SKIP=check-claude-template-propagation (gate-2-merge.md step 6).")
+            print(f"      After the merge: {FLEET_RUN}")
+        else:
+            print("\n[CAUSE] Someone modified the SST3-managed section (above the boundary marker)")
+            print("        instead of just the project-specific section.")
+            print("\n[FIX] Run propagation to sync SST3 sections:")
+            print(f"      {FLEET_RUN}")
+            print("\n      Then review and commit the changes in each repository.")
         print("\n" + "="*60 + "\n")
         sys.exit(1)  # BLOCK commit - this is a critical error
 
@@ -318,44 +251,19 @@ def main():
             print("[ERROR] Dry-run propagation failed. Check the script.")
             print("\n" + output)
             print("\n[WARNING] Commit will proceed, but please fix propagation manually:")
-            print("   python scripts/propagate-template.py --all")
+            print(f"   {FLEET_RUN}")
             print("\n" + "="*60 + "\n")
             sys.exit(0)  # Don't block commit even on failure
 
         # Show dry-run output
         print(output)
 
-        # Ask user if they want to propagate now
-        print()
-        response = ask_user("Propagate these changes to other repositories now?", default='n')
-
-        if response is None:
-            # Skip was selected
-            print("\n[REMINDER] Run propagation manually later:")
-            print("   python scripts/propagate-template.py --all")
-            print("\n" + "="*60 + "\n")
-            sys.exit(0)
-
-        if response:
-            print("\n[INFO] Propagating changes...\n")
-            if propagate_now():
-                print("\n[SUCCESS] Propagation complete!")
-                print("\n   NEXT STEPS:")
-                print("   1. Review the changes in each repository")
-                print("   2. Stage updated CLAUDE.md files if satisfied")
-                print("   3. Create separate commits in each repo")
-                print("\n" + "="*60 + "\n")
-            else:
-                print("\n[ERROR] Propagation failed. Run manually:")
-                print("   python scripts/propagate-template.py --all")
-                print("\n" + "="*60 + "\n")
-        else:
-            print("\n[REMINDER] Run propagation manually later:")
-            print("   python scripts/propagate-template.py --all")
-            print("\n   IMPORTANT:")
-            print("   - Other repositories are now out of sync")
-            print("   - Propagate as soon as possible")
-            print("\n" + "="*60 + "\n")
+        # K8 refuses the write from any tree but a clean origin worktree, which a commit
+        # that stages the template never is: offering it only led to a refusal.
+        print("\n[REMINDER] Consumers take this after the Gate-2 merge:")
+        print(f"   {FLEET_RUN}")
+        print("\n" + "="*60 + "\n")
+        sys.exit(0)
 
     # Exit 0 - warnings are non-blocking (validation already passed)
     sys.exit(0)

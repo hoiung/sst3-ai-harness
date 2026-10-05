@@ -84,9 +84,9 @@ for l in sys.stdin:
 ')
 [[ -n "$STATUS_LINE" ]] || fail "no status_line for stage-5 ordinal 1"
 
-SPAN2_PRE=$(python3 - "$F" <<PYEOF
+SPAN2_PRE=$(python3 - "$F" "$SCRIPTS_DIR" <<'PYEOF'
 import sys, json
-sys.path.insert(0, "$SCRIPTS_DIR")
+sys.path.insert(0, sys.argv[2])
 import feedback_parser as fp
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
@@ -100,9 +100,9 @@ bash "$TOOL" --apply --tuples "$TD/man.json" >/dev/null 2>&1 || fail "flip apply
 FLIPPED_LINE=$(sed -n "${STATUS_LINE}p" "$F")
 [[ "$FLIPPED_LINE" == "**improvement_status**: superseded" ]] || fail "flip did not land at parser status_line $STATUS_LINE (AC 1.3a); line reads: $FLIPPED_LINE"
 
-SPAN2_POST=$(python3 - "$F" <<PYEOF
+SPAN2_POST=$(python3 - "$F" "$SCRIPTS_DIR" <<'PYEOF'
 import sys, json
-sys.path.insert(0, "$SCRIPTS_DIR")
+sys.path.insert(0, sys.argv[2])
 import feedback_parser as fp
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()

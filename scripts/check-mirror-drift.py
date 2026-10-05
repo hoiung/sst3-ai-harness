@@ -32,6 +32,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,19 +61,54 @@ from pathlib import Path
 # worktree, 0 from the canonical clone, for identical canonical text and transforms.
 # The middle candidate fixes it by walking from THIS FILE to its sibling canonical
 # tree, so resolution no longer depends on where the process was launched.
+#
+# dotfiles#577 Stage 5 (D1). Two more defects in the same lookup. (1) The consumer
+# candidate was still cwd-relative, so from a consumer's linked worktree it named
+# <repo>/.claude/worktrees/dotfiles and the table went missing the same way; it now
+# walks from the MAIN clone (the same .git-file read as
+# sst3_mirror_utils._main_clone_root, inlined because it must run before that
+# module is imported). (2) The directory was INSERTED at sys.path[0], so a consumer
+# imported the SIBLING CLONE's sst3_mirror_utils, not its own vendored copy: with
+# that clone on a stale branch the consumer ran stale logic, and the stale-canon
+# refusal below could never fire. It is now APPENDED, so this repo's own modules
+# win and only the canonical-only table comes from the sibling.
 _here = Path(__file__).resolve().parent
+
+
+def _main_clone_root(start: Path) -> Path:
+    for cur in (start, *start.parents):
+        dotgit = cur / ".git"
+        if dotgit.is_dir():
+            return cur
+        if dotgit.is_file():
+            try:
+                txt = dotgit.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                return cur
+            gd = Path(txt.split(":", 1)[1].strip()) if txt.startswith("gitdir:") else None
+            if gd is not None and not gd.is_absolute():
+                gd = (cur / gd).resolve()
+            if gd is not None and gd.parent.name == "worktrees" and gd.parent.parent.name == ".git":
+                return gd.parent.parent.parent
+            return cur
+    return start
+
+
 for _cand in (
     _here,
     _here.parent / "SST3" / "scripts",
-    Path.cwd() / "../dotfiles/SST3/scripts",
+    _main_clone_root(_here).parent / "dotfiles" / "SST3" / "scripts",
 ):
     if (_cand / "_private_term_table.py").exists():
-        sys.path.insert(0, str(_cand.resolve()))
+        if str(_cand.resolve()) not in sys.path:
+            sys.path.append(str(_cand.resolve()))
         break
 
 try:
     import sst3_mirror_utils as smu
-    from sst3_block_utils import find_boundary_lines, extract_managed_block, strip_marker_lines
+    from sst3_block_utils import (
+        duplicate_hook_ids_problem, extract_managed_block, find_boundary_lines, strip_marker_lines,
+    )
 except ImportError as exc:  # pragma: no cover — only hits if script is run standalone
     print(
         f"ERROR: cannot import sst3_mirror_utils / sst3_block_utils "
@@ -91,15 +127,17 @@ def _staged_paths() -> set[str] | None:
     the strict block-all behaviour rather than silently weakening the gate.
     """
     try:
-        out = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
+        # -z (#577 Stage 5 R62, the S15 class): git C-quotes a name holding a quote,
+        # a backslash or a non-ASCII byte without it, and the quoted string never
+        # matched the manifest path, so a staged drifted mirror only warned.
+        out = subprocess.run(  # sst3-sec: justified: fixed git argv, no shell, no caller input
+            ["git", "diff", "--cached", "--name-only", "-z"],
             capture_output=True,
-            text=True,
             check=True,
         )
     except (OSError, subprocess.CalledProcessError):
         return None
-    return {line.strip() for line in out.stdout.splitlines() if line.strip()}
+    return {os.fsdecode(name) for name in out.stdout.split(b"\0") if name}
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -164,6 +202,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "warning, drift on a staged target blocks (unless --strict)."
         ),
     )
+    parser.add_argument(
+        "--canon-current",
+        action="store_true",
+        help=(
+            "Only check that the sibling ../dotfiles clone is on origin's "
+            "default branch, neither behind nor ahead of it, with no uncommitted "
+            "tracked changes (dotfiles#577 D1, R44); exit 0 and "
+            "print the clone path on stdout if it is, 2 with the reason if not. "
+            "Consumer hooks that execute dotfiles scripts run this first, from "
+            "their own vendored copy, and run the scripts from the printed path."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -183,7 +233,7 @@ def _check_managed_block_drift(
     """
     marker_start: str = entry["marker_start"]
     marker_end: str = entry["marker_end"]
-    target_path = smu.resolve_mirror(manifest_path, mirror["repo"], mirror["path"])
+    target_path = smu.resolve_self_row_destination(manifest_path, mirror["repo"], mirror["path"])
     if not target_path.is_file():
         return True, f"{mirror['repo']}/{mirror['path']}: target file missing"
 
@@ -209,7 +259,7 @@ def _check_managed_block_drift(
     if start == -1 and end == -1:
         return True, (
             f"{mirror['repo']}/{mirror['path']}: managed-block markers absent "
-            f"(first-apply needed — run propagate-block.py --apply)"
+            f"(first-apply needed — {smu.fleet_apply_hint('propagate-block.py')})"
         )
     if start == -1 or end == -1:
         return True, (
@@ -217,12 +267,18 @@ def _check_managed_block_drift(
             f"marker but not both (start={start} end={end})"
         )
 
+    # #577 Stage 5 R45/R53: the body can match while a hand-written copy of one of its
+    # hooks still runs beside it; nothing reported that.
+    dup = duplicate_hook_ids_problem(target_text, marker_start, marker_end)
+    if dup:
+        return True, f"{mirror['repo']}/{mirror['path']}: {dup}"
+
     actual_body = extract_managed_block(target_text, marker_start, marker_end) or ""
     actual_body_normalised = actual_body.strip("\n")
     if actual_body_normalised != expected_body_normalised:
         return True, (
             f"{mirror['repo']}/{mirror['path']}: managed-block content drifts "
-            f"from canonical (run propagate-block.py --apply to sync)"
+            f"from canonical ({smu.fleet_apply_hint('propagate-block.py')})"
         )
     return False, ""
 
@@ -234,10 +290,27 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest_path = args.manifest if args.manifest else smu.find_manifest()
     except smu.ManifestError as exc:
+        if args.canon_current:
+            print(f"ERROR: dotfiles not found, canon not checked ({exc})", file=sys.stderr)
+            return smu.EXIT_CONFIG
         print(
             f"SKIP: dotfiles not found — drift check skipped ({exc})",
             file=sys.stderr,
         )
+        return smu.EXIT_OK
+
+    # dotfiles#577 D1: a stale sibling dotfiles clone is not the canon. Refuse
+    # loudly instead of reporting false drift with a remedy that reverts canon.
+    problem = smu.sibling_canon_problem(manifest_path)
+    if problem:
+        print(f"ERROR: {problem}", file=sys.stderr)
+        return smu.EXIT_CONFIG
+    if args.canon_current:
+        # stdout carries the clone path alone, so a hook can run its scripts from it.
+        root = smu.resolve_dotfiles_root(manifest_path)
+        print(root)
+        if not args.quiet:
+            print(f"OK: canon current ({root})", file=sys.stderr)
         return smu.EXIT_OK
 
     try:
@@ -337,11 +410,14 @@ def _emit_and_exit(
 
         if blocking:
             why = "(--strict block-all)" if args.strict else "and STAGED"
-            sync_hint = (
-                "Run propagate-block.py --apply to sync."
-                if args.managed_blocks
-                else "Run propagate-mirrors.py --apply to sync."
-            )
+            # #577 R49: say WHERE the sync runs; the consumer writers refuse any tree
+            # but a clean origin worktree, the dotfiles self-row writes this checkout.
+            if args.repo == "dotfiles" and not args.managed_blocks:
+                sync_hint = smu.SELF_ROW_APPLY_HINT[0].upper() + smu.SELF_ROW_APPLY_HINT[1:] + "."
+            else:
+                tool = "propagate-block.py" if args.managed_blocks else "propagate-mirrors.py"
+                hint = smu.fleet_apply_hint(tool)
+                sync_hint = hint[0].upper() + hint[1:] + "."
             print(
                 f"\n{len(blocking)} mirrored file(s) drifted {why} out of "
                 f"{checked} checked. {sync_hint}",
@@ -367,10 +443,13 @@ def _emit_and_exit(
         # remediation-hint-names-a-thing-that-does-not-exist defect the block above
         # warns against, committed one line down (#552 Stage 5).
         enforce_scope = f"--repo {args.repo} " if args.repo else ""
+        tool = "propagate-block.py" if args.managed_blocks else "propagate-mirrors.py"
+        sync = (f"run in this dotfiles checkout: python SST3/scripts/{tool} --apply --repo dotfiles"
+                if args.repo == "dotfiles" else smu.fleet_apply_hint(tool))
         print(
             f"\n{len(unstaged)} mirrored file(s) drifted but NOT staged "
             f"(out of {checked} checked) — surfaced as warnings, commit "
-            f"allowed. Run propagate-{'block' if args.managed_blocks else 'mirrors'}.py --apply to sync. "
+            f"allowed. To sync: {sync}. "
             f"NOTE: no push/CI gate re-checks this; to enforce it now run "
             f"`python3 {Path(smu.propagate_tool_path()).parent / 'check-mirror-drift.py'} "
             f"{enforce_scope}--strict`, which exits non-zero on any drifted or "

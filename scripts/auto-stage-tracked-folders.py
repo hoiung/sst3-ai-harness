@@ -52,15 +52,18 @@ def get_untracked_and_modified_files(folders):
 
         try:
             # --others (untracked) + --modified in one call
-            result = subprocess.run(
-                ["git", "ls-files", "--others", "--modified",
-                 "--exclude-standard", folder],
+            # -z (#577 Stage 5 S15): without it a name holding a quote, a backslash
+            # or a non-ASCII byte came back C-quoted and `git add` was handed the
+            # quoted string.
+            result = subprocess.run(  # sst3-sec: justified: argv list, no shell; fixed git verb, folder from TRACKED_AUTOSTAGE_FOLDERS
+                ["git", "ls-files", "-z", "--others", "--modified",
+                 "--exclude-standard", "--", folder],
                 capture_output=True,
                 text=True,
+                errors="surrogateescape",  # a raw non-UTF-8 name round-trips to `git add` (R10)
                 check=True
             )
-            if result.stdout.strip():
-                all_files.extend(result.stdout.strip().split('\n'))
+            all_files.extend(name for name in result.stdout.split('\0') if name)
 
         except subprocess.CalledProcessError as e:
             print(
@@ -86,7 +89,10 @@ def auto_stage_folders(folders):
 
     print("[pre-commit] Auto-staging files:")
     for file in sorted(files):
-        print(f"  {file}")
+        # A name that is not UTF-8 holds lone surrogates (surrogateescape); printed as is it
+        # raised UnicodeEncodeError on a strict stdout and nothing was staged (#577 Stage 5
+        # fix review r2). The display form escapes those bytes; `git add` gets the real name.
+        print("  " + file.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace"))
 
     # Each appended item is the pathspec list of ONE `git add` invocation;
     # rollback (AP #7 atomic-or-rollback) resets the flattened union.

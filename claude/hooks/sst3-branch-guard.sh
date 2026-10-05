@@ -37,6 +37,20 @@
 #       on-disk artefact is the append-only audit log below, inert when
 #       unwired (no process reads it; it is a passive record).
 #
+# CANON LOCK (dotfiles#577 D1, operator ruling 11)  The clone that
+#       ~/.claude/commands links into is the RUNTIME CANON: commands, agents,
+#       skills, the checkbox MCP and every consumer `../dotfiles` hook read its
+#       working tree. A branch switch or create there silently swaps the canon
+#       every session runs (measured 2026-10-04: it sat 372 commits behind on
+#       another session's branch, so #577 was live only in the copied hooks).
+#       Inside that clone ANY branch switch/create — solo creates included —
+#       is DENIED (exit 2) whatever SST3_BRANCH_GUARD_MODE says; the one
+#       allowed move is a plain `git checkout|switch <default-branch>`, the
+#       recovery. The target directory is the event's `.cwd`, updated by
+#       `cd`/`pushd` segments and `git -C`/`--work-tree`/`--git-dir`/GIT_DIR.
+#       SST3_CANON_CLONE overrides the clone path (tests); with no symlinked
+#       ~/.claude/commands there is no runtime canon to lock.
+#
 # AUDIT (AC5 / AP #12 — observability at write time)  Every fire (WARN or
 #       DENY) appends one structured line to ~/.claude/hooks/branch-guard.log
 #       (override path via SST3_BRANCH_GUARD_LOG). This makes the operator's
@@ -131,6 +145,7 @@ if [[ $jqrc -ne 0 && -n "${raw_stdin//[[:space:]]/}" ]]; then
   flag "$(printf '%.200s' "$raw_stdin" | tr '\n' ' ')"
 fi
 [[ -z "$CMD" ]] && safe   # valid JSON, no command field (non-Bash / EnterWorktree) — nothing to classify
+RAW_CMD="$CMD"           # as typed: the canon pass reads it with the shared shell reader
 
 # Pre-tokenisation shell-normalisation (Ralph Tier-3 #4 + Stage-5 Class-A FN).
 # The shell collapses these BEFORE exec, so the classifier MUST too, else a
@@ -159,8 +174,11 @@ CMD="${CMD//\\/}"
 
 # Quick exit: no branch verb anywhere → cannot be a switch/create. (A worktree
 # path literally containing "checkout" does NOT quick-exit; it is verb-anchored
-# SAFE in the segment walk below.)
-if [[ "$CMD" != *checkout* && "$CMD" != *switch* ]]; then
+# SAFE in the segment walk below.) `git symbolic-ref HEAD refs/heads/x` and gh's
+# `gh co` alias move HEAD too, and an ANSI-C `$'…'` word can spell any verb, so each
+# goes on to the canon pass (#577 Stage 5 fix review 2).
+if [[ "$CMD" != *checkout* && "$CMD" != *switch* && "$CMD" != *bisect* && "$CMD" != *symbolic-ref* \
+      && ! "$CMD" =~ (^|[^[:alnum:]_.-])gh[[:space:]] && "$RAW_CMD" != *"\$'"* ]]; then
   safe
 fi
 
@@ -193,7 +211,7 @@ classify_checkout() {
     tok="${a[i]}"
     if [[ "$tok" == "-b" || "$tok" == "-B" ]]; then
       local branch="${a[i + 1]-}"
-      if [[ -n "$branch" ]] && is_solo "$branch"; then echo SAFE; else echo FLAG; fi
+      if [[ -n "$branch" ]] && is_solo "$branch"; then echo SAFE_CREATE; else echo FLAG; fi
       return
     fi
     [[ "$tok" == "--detach" ]] && { echo FLAG; return; }        # detached HEAD
@@ -215,7 +233,9 @@ classify_checkout() {
   is_sha "$first"              && { echo FLAG; return; }        # detached sha
   has_fileext "$first"         && { echo SAFE; return; }        # file restore (foo.txt)
   [[ -e "$first" ]]            && { echo SAFE; return; }        # existing path restore
-  echo FLAG                                                     # bare branch name
+  # bare branch name. MOVE carries the ref only for the plain one-operand form
+  # (the canon lock's recovery exception); with options (`-f main`) it is FLAG.
+  if [[ ${#a[@]} -eq 1 ]]; then echo "MOVE $first"; else echo FLAG; fi
 }
 
 # Classify the args of `git switch …`. There is no file-restore form of switch.
@@ -225,11 +245,106 @@ classify_switch() {
     tok="${a[i]}"
     if [[ "$tok" == "-c" || "$tok" == "-C" || "$tok" == "--create" ]]; then
       branch="${a[i + 1]-}"
-      if [[ -n "$branch" ]] && is_solo "$branch"; then echo SAFE; else echo FLAG; fi
+      if [[ -n "$branch" ]] && is_solo "$branch"; then echo SAFE_CREATE; else echo FLAG; fi
       return
     fi
   done
-  echo FLAG   # any `git switch <branch>` / `-` / `--detach` / bare → FLAG
+  # any `git switch <branch>` / `-` / `--detach` / bare → FLAG; the plain
+  # one-operand form carries its ref as MOVE (canon-lock recovery exception)
+  if [[ ${#a[@]} -eq 1 && "${a[0]}" != -* ]] && ! is_prevref "${a[0]}"; then
+    echo "MOVE ${a[0]}"
+  else
+    echo FLAG
+  fi
+}
+
+# --- Canon lock (dotfiles#577 D1, ruling 11) -------------------------------
+# The runtime canon clone: where ~/.claude/commands links into. Prints it, or
+# returns 1 when there is no symlinked install (no runtime canon to lock).
+canon_clone() {
+  local c="${SST3_CANON_CLONE-}"
+  if [[ -z "$c" ]]; then
+    c="$(readlink -f "$HOME/.claude/commands" 2>/dev/null)" || return 1
+    [[ "$c" == */.claude/commands && "$c" != "$HOME/.claude/commands" ]] || return 1
+    c="${c%/.claude/commands}"
+  fi
+  printf '%s' "$c"
+}
+# resolve_dir <base> <dir> — expand ~ / $HOME, strip one layer of quotes,
+# anchor a relative path at <base>.
+resolve_dir() {
+  local base="$1" d="$2"
+  d="${d#\"}"; d="${d%\"}"; d="${d#\'}"; d="${d%\'}"
+  case "$d" in
+    '~')                 d="$HOME" ;;
+    '~/'*)               d="$HOME/${d#\~/}" ;;
+    '$HOME'|'${HOME}')   d="$HOME" ;;
+    '$HOME/'*)           d="$HOME/${d#\$HOME/}" ;;
+    '${HOME}/'*)         d="$HOME/${d#\$\{HOME\}/}" ;;
+    /*)                  ;;
+    *)                   d="$base/$d" ;;
+  esac
+  printf '%s' "$d"
+}
+# seg_cd_target <seg> — prints the target of a bare `cd X` / `pushd X` segment.
+seg_cd_target() {
+  local s="$1"
+  while [[ "$s" == [[:space:]\(\{]* ]]; do s="${s#?}"; done
+  if [[ "$s" =~ ^(cd|pushd)[[:space:]]*$ ]]; then printf '%s' "~"; return 0; fi
+  [[ "$s" =~ ^(cd|pushd)[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]] || return 1
+  [[ "${BASH_REMATCH[2]}" == "-" ]] && return 1
+  printf '%s' "${BASH_REMATCH[2]}"
+}
+# seg_git_dirs <seg> <cwd> — the directories a git segment acts on: the cwd
+# after every `-C` (chained, relative to the previous), plus any --work-tree /
+# --git-dir / GIT_DIR / GIT_WORK_TREE value (a git dir maps to its parent).
+seg_git_dirs() {
+  local cur="$2" i v
+  local -a w
+  read -ra w <<<"$1" || true
+  for ((i = 0; i < ${#w[@]}; i++)); do
+    case "${w[i]}" in
+      GIT_DIR=*)       v="${w[i]#GIT_DIR=}"; printf '%s\n' "$(resolve_dir "$cur" "${v%/.git}")" ;;
+      GIT_WORK_TREE=*) printf '%s\n' "$(resolve_dir "$cur" "${w[i]#GIT_WORK_TREE=}")" ;;
+      git|*/git)       break ;;
+    esac
+  done
+  for ((i++; i < ${#w[@]}; i++)); do
+    case "${w[i]}" in
+      -C)             ((i++)); cur="$(resolve_dir "$cur" "${w[i]-}")" ;;
+      -C?*)           cur="$(resolve_dir "$cur" "${w[i]#-C}")" ;;
+      --work-tree)    ((i++)); printf '%s\n' "$(resolve_dir "$cur" "${w[i]-}")" ;;
+      --work-tree=*)  printf '%s\n' "$(resolve_dir "$cur" "${w[i]#--work-tree=}")" ;;
+      --git-dir)      ((i++)); v="${w[i]-}"; printf '%s\n' "$(resolve_dir "$cur" "${v%/.git}")" ;;
+      --git-dir=*)    v="${w[i]#--git-dir=}"; printf '%s\n' "$(resolve_dir "$cur" "${v%/.git}")" ;;
+      -c|--namespace) ((i++)) ;;
+      -*)             ;;
+      *)              break ;;
+    esac
+  done
+  printf '%s\n' "$cur"
+}
+# in_canon <dir> — true when <dir> sits in the canon clone's MAIN working tree
+# (a linked worktree under it has its own toplevel, so it is not locked). A directory the
+# same command creates is not there yet: it is judged by its nearest existing parent, so a
+# new folder inside the canon is in it (#577 Stage 5 fix review 2); a new linked worktree
+# under the canon's .claude/worktrees/ is not.
+in_canon() {
+  local t d="$1"
+  if [[ ! -d "$d" ]]; then
+    [[ "$d" == "$CANON"/.claude/worktrees/* ]] && return 1
+    while [[ -n "$d" && "$d" != / && ! -d "$d" ]]; do d="$(dirname -- "$d")"; done
+  fi
+  t="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [[ -n "$t" && "$t" -ef "$CANON" ]]
+}
+canon_deny() {
+  local branch ahead
+  branch="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$CANON" branch --show-current 2>/dev/null)"
+  audit canon-deny "$1"
+  printf 'SST3 branch-safety: BLOCKED — %s is the runtime canon clone: ~/.claude/commands, agents, skills, the checkbox MCP and every consumer ../dotfiles hook read its working tree, so a branch switch or create there silently swaps the canon every session runs (dotfiles#577 D1). It is on branch %s. Work in a worktree instead (EnterWorktree, or git worktree add under %s/.claude/worktrees/). The only move allowed here is the recovery: git checkout %s.\n' \
+    "$CANON" "${branch:-<detached>}" "$CANON" "${CANON_DEFAULT:-<origin default branch: unresolved — run it yourself with the ! prefix>}" >&2
+  exit 2
 }
 
 # Walk one shell segment. Echoes FLAG|SAFE|SKIP (SKIP = not a git command here).
@@ -363,16 +478,94 @@ seg_hides_branch_verb() {
   return 1
 }
 
+CANON="$(canon_clone)" || CANON=""
+CANON_DEFAULT=""
+if [[ -n "$CANON" ]]; then
+  CANON_DEFAULT="$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$CANON" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
+  CANON_DEFAULT="${CANON_DEFAULT#origin/}"
+fi
+CUR="$(printf '%s' "$raw_stdin" | jq -r '.cwd // empty' 2>/dev/null)"
+[[ -n "$CUR" ]] || CUR="$PWD"
+
+# #577 Stage 5 fix review (R35/R36/R73): the canon lock reads the command with the shared shell
+# reader _lib-shellcmd.py — quotes removed, sh -c / eval / $( ) unwrapped, and the directory each
+# git runs in followed through cd/pushd in any spelling, subshells, env -C, git -C, --git-dir and
+# an exported GIT_DIR. The segment loop below only knew a bare `cd X`, so `pushd X >/dev/null`,
+# `cd -- X`, `--git-dir=X/.git/` and `sh -c '…'` reached the canon with a WARN. In the canon clone
+# every checkout or switch is DENY except a `--` path restore (paths after the `--`; a bare
+# trailing `--` only marks the branch) and the recovery to the default branch; so are
+# `git bisect` (moves HEAD), `git symbolic-ref HEAD <ref>` and `gh pr checkout` / `gh co`.
+# A command the reader cannot read whole (missing, failed, or an opaque part) is DENY here
+# when the guard's directory is in the canon and the quote-stripped text names a branch verb
+# (#577 Stage 5 fix review 2). The loop stays as a second reading.
+canon_pass() {
+  local lib out dir verdict unread=""
+  lib="$(dirname "${BASH_SOURCE[0]}")/_lib-shellcmd.py"
+  if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$lib" ]]; then
+    unread="python3 or $lib missing"
+  elif ! out="$(printf '%s' "$RAW_CMD" | python3 "$lib" git --cwd "$CUR" 2>/dev/null)"; then
+    unread="the shell reader failed"
+  else
+    unread="$(printf '%s\n' "$out" | jq -r 'select(has("opaque")) | .opaque' 2>/dev/null | head -n 1)"
+  fi
+  if [[ -n "$unread" ]]; then
+    audit canon-pass-unread "$unread"
+    if in_canon "$CUR" && [[ "${RAW_CMD//[\'\"\\]/}" =~ (^|[^[:alnum:]_-])(checkout|switch|bisect|symbolic-ref|co)([^[:alnum:]_-]|$) ]]; then
+      canon_deny "$RAW_CMD"
+    fi
+    [[ -n "${out:-}" ]] || return 0
+  fi
+  [[ -n "$out" ]] || return 0
+  out="$(printf '%s\n' "$out" | jq -r --arg def "$CANON_DEFAULT" '
+    select(has("verb"))
+    | (if .git_dir then (if (.git_dir | endswith("/.git")) then (.git_dir | rtrimstr("/.git")) else .git_dir end)
+     else .cwd end) as $d
+    | ($d // "") + "\t" + (
+        if .tool == "gh" then "deny"
+        elif .verb == "checkout" then
+          (if (.args | length) == 0 or ((.args | index("--")) as $k | $k != null and $k < (.args | length) - 1)
+              or ($def != "" and .args == [$def]) then "ok" else "deny" end)
+        elif .verb == "symbolic-ref" then
+          (if any(.args[]; IN("-d", "--delete")) or ([.args[] | select(startswith("-") | not)] | length) >= 2
+           then "deny" else "ok" end)
+        elif .verb == "switch" then
+          (if (.args | length) == 0 or ($def != "" and .args == [$def]) then "ok" else "deny" end)
+        elif .verb == "bisect" then
+          (if (.args | length) == 0 or (.args[0] | IN("log", "visualize", "view", "terms", "help")) then "ok" else "deny" end)
+        else "ok" end)' 2>/dev/null)" || { audit canon-pass-not-run "jq could not read the reader output"; return 0; }
+  while IFS=$'\t' read -r dir verdict; do
+    [[ "$verdict" == deny && -n "$dir" ]] || continue
+    in_canon "$dir" && canon_deny "$RAW_CMD"
+  done <<<"$out"
+  return 0
+}
+[[ -n "$CANON" ]] && canon_pass
+
 # Split the whole command on shell control operators, scan every segment.
+# Every segment is scanned before the WARN fires, so a canon-clone segment
+# after an ordinary flagged one is still DENIED (flag() exits on the first).
 NORM="${CMD//&&/$'\n'}"; NORM="${NORM//||/$'\n'}"
 NORM="${NORM//;/$'\n'}"; NORM="${NORM//|/$'\n'}"
+want_flag=0
 while IFS= read -r seg; do
   [[ -z "${seg// /}" ]] && continue
+  if cdt="$(seg_cd_target "$seg")"; then CUR="$(resolve_dir "$CUR" "$cdt")"; continue; fi
   verdict="$(classify_segment "$seg")"
   case "$verdict" in
-    FLAG) flag "$CMD" ;;                                         # parsed git branch op → fire
-    SKIP) seg_hides_branch_verb "$seg" && flag "$CMD" ;;          # wrapper hiding a verb → fire
+    SAFE) continue ;;                                            # file restore / worktree verb
+    SKIP) seg_hides_branch_verb "$seg" || continue; verdict=FLAG ;;  # wrapper hiding a verb → fire
   esac
+  # verdict ∈ FLAG | SAFE_CREATE | MOVE <ref>
+  if [[ -n "$CANON" ]]; then
+    while IFS= read -r d; do
+      [[ -n "$d" ]] && in_canon "$d" || continue
+      [[ -n "$CANON_DEFAULT" && "$verdict" == "MOVE $CANON_DEFAULT" ]] && continue 2   # the recovery
+      canon_deny "$CMD"
+    done < <(seg_git_dirs "$seg" "$CUR")
+  fi
+  [[ "$verdict" == SAFE_CREATE ]] && continue                    # solo/ create outside the canon clone
+  want_flag=1                                                    # parsed git branch op → fire
 done <<<"$NORM"
 
+[[ $want_flag -eq 1 ]] && flag "$CMD"
 safe

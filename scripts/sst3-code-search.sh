@@ -82,9 +82,16 @@ if [[ "$MODE" == "--literal" ]]; then
     # which produces 0 matches with 0 stderr (silent-zero class). Surfaced
     # during Phase 4 self-test rollout: the code-search-keyword fixture
     # passed under interactive bash but failed under pre-commit's subprocess.
-    rg --json -n "$PATTERN" . 2>/dev/null \
-        | jq -c 'select(.type=="match") | {file: .data.path.text, range: {start: .data.line_number, end: .data.line_number}, text: (.data.lines.text // "")}' \
-        || true
+    # #577 Stage 5 S3: `-F -e` makes "literal" literal — without -F the pattern was a
+    # regex (`foo(` was a parse error) and a leading `-` read as an rg option — and the
+    # rc is checked before jq, the same buffer-then-check as the structural path: an rg
+    # error (rc >= 2) was swallowed by `2>/dev/null ... || true` into zero matches.
+    RG_OUT=$(mktemp)
+    RG_RC=0
+    rg --json -n -F -e "$PATTERN" . > "$RG_OUT" 2>/dev/null || RG_RC=$?
+    ast_grep_check_rc "sst3-code-search" "$RG_RC" rg || { rm -f "$RG_OUT"; exit 0; }
+    jq -c 'select(.type=="match") | {file: .data.path.text, range: {start: .data.line_number, end: .data.line_number}, text: (.data.lines.text // "")}' < "$RG_OUT"
+    rm -f "$RG_OUT"
 else
     if ! command -v ast-grep >/dev/null 2>&1; then
         echo 'ERROR: ast-grep not installed; see dotfiles/docs/guides/code-query-playbook.md "Wrapper-Script Lane > Install"' >&2

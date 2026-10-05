@@ -985,6 +985,13 @@ def resolve_main_clone_root(manifest_path: Path) -> Path:
         main = Path(s.split(_WORKTREE_SEG, 1)[0])
     else:
         main = resolved.parent.parent
+        # A linked worktree made outside .claude/worktrees/ (`git worktree add
+        # ../dotfiles-x`) has no segment to strip; its own `.git` file names the main
+        # clone (file I/O only). Without this its self-row resolved to the shared main
+        # clone, and the "run in this checkout" remedy wrote the runtime canon
+        # (#577 Stage 5 fix review r2).
+        if (main / ".git").is_file():
+            main = _main_clone_root(main) or main
     if not (main / "SST3" / MANIFEST_FILENAME).is_file():
         raise ManifestError(
             f"resolve_main_clone_root: derived main clone {main} has no "
@@ -1001,6 +1008,208 @@ def in_linked_worktree(manifest_path: Path) -> bool:
         resolve_dotfiles_root(manifest_path).resolve()
         != resolve_main_clone_root(manifest_path).resolve()
     )
+
+
+def _git(root: Path, *args: str) -> tuple[int, str]:
+    """Run git in <root> with every GIT_* variable removed (AP #31: a commit or
+    push hook exports GIT_DIR / GIT_INDEX_FILE, which would point the probe at
+    the CALLING repo instead of <root>)."""
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        cp = subprocess.run(  # sst3-sec: justified: argv list, no shell; git verbs fixed in this module
+            ["git", "-C", str(root), *args],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, str(exc)
+    return cp.returncode, cp.stdout.strip()
+
+
+def _origin_default(root: Path) -> str | None:
+    rc, out = _git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    return out.split("/", 1)[1] if rc == 0 and "/" in out else None
+
+
+def sibling_canon_problem(manifest_path: Path, caller: Path | None = None) -> str | None:
+    """dotfiles#577 D1 (operator ruling 11): refuse to read canon from a STALE
+    sibling dotfiles clone.
+
+    A consumer's gates read canonical bytes from the sibling `../dotfiles` MAIN
+    clone's working tree. When that clone sits on another branch, or behind
+    origin's default branch, every comparison against it is wrong: measured
+    2026-10-04, it was 372 commits behind on another session's branch, the
+    strict drift gate failed in 20/20 consumers, and the printed remedy
+    (propagate --apply) would have copied the stale bytes back over the
+    consumers. Returns the refusal text, or None when reading is safe:
+      - the canonical tree is a linked worktree (in-flight edits are deliberate);
+      - the caller IS the dotfiles clone (self-row reads its own tree);
+      - the canonical tree is not a git main clone (a fixture or export).
+    Unresolvable git state is a refusal, never a pass. On the default branch the
+    clone must also hold no uncommitted tracked change and no unpushed commit: either
+    one is bytes origin does not have, so a gate reading it ran unreviewed code (#577
+    Stage 5 fix review R44). Limit: "behind" is measured against the last fetch; a
+    push made since is invisible without the network, which a commit hook does not use.
+    """
+    root = resolve_dotfiles_root(manifest_path).resolve()
+    if _WORKTREE_SEG in str(root) + "/" or not (root / ".git").is_dir():
+        return None
+    caller_root = _main_clone_root((caller or Path.cwd()).resolve())
+    if caller_root is not None and caller_root.resolve() == root:
+        return None
+    default = _origin_default(root)
+    if default is None:
+        return (
+            f"shared dotfiles {root}: cannot resolve origin's default branch "
+            f"(refs/remotes/origin/HEAD), so it cannot tell whether the canonical "
+            f"files there are current. This check did not run. Fix: "
+            f"git -C {root} remote set-head origin --auto"
+        )
+    rc_b, branch = _git(root, "branch", "--show-current")
+    rc_n, behind = _git(root, "rev-list", "--count", f"HEAD..origin/{default}")
+    rc_a, ahead = _git(root, "rev-list", "--count", f"origin/{default}..HEAD")
+    rc_s, dirty = _git(root, "status", "--porcelain", "--untracked-files=no")
+    if rc_b or rc_n or rc_a or rc_s or not (behind.isdigit() and ahead.isdigit()):
+        return (
+            f"shared dotfiles {root}: git could not read its branch, its distance "
+            f"from origin/{default} or its status, so this check did not run."
+        )
+    if branch == default and behind == "0" and ahead == "0" and not dirty:
+        return None
+    if branch == default and behind == "0":
+        what = "; ".join(x for x in (
+            f"{ahead} commit(s) not on origin/{default}" if ahead != "0" else "",
+            f"{len(dirty.splitlines())} uncommitted tracked change(s)" if dirty else "",
+        ) if x)
+        return (
+            f"shared dotfiles {root} is on {default} but holds {what}. Those bytes are "
+            f"not the canon, so this check did not run. This is NOT drift in this repo. "
+            f"Move that work onto a branch in a worktree (or push it through Gate 2), "
+            f"leaving the clone at origin/{default}: git -C {root} status"
+        )
+    return (
+        f"shared dotfiles is on branch {branch or '<detached HEAD>'}, {behind} behind "
+        f"origin/{default} ({root}). The canonical files there are not the canon, so "
+        f"this check did not run. This is NOT drift in this repo: do not run "
+        f"propagate-mirrors to clear it, that would copy the stale files over this "
+        f"repo. Return that clone to {default} first (save any uncommitted work "
+        f"there), e.g. git -C {root} checkout {default} && "
+        f"git -C {root} merge --ff-only origin/{default}"
+    )
+
+
+def propagation_source_problem(manifest_path: Path) -> str | None:
+    """dotfiles#577 Stage 5 (K8): consumer propagation writes only MERGED canon.
+
+    Writing consumer mirrors / blocks / CLAUDE.md sections is allowed only from a
+    clean linked worktree checked out at origin's default branch. From the main
+    clone the self-row is the shared runtime canon (another session's branch and
+    uncommitted files measured there 2026-10-04); from a solo branch or a dirty
+    tree the consumers get bytes master does not hold, which the next drift gate
+    then reports against master. Returns the refusal text, or None. Self-row-only
+    writes are the caller's exemption (they land in this tree), and a canonical
+    tree that is not a git checkout (a test fixture) is not a propagation source.
+    """
+    root = resolve_dotfiles_root(manifest_path).resolve()
+    if not (root / ".git").exists():
+        return None
+    main = resolve_main_clone_root(manifest_path).resolve()
+    where = f"a clean worktree under {main}/.claude/worktrees/ at origin's default branch"
+    if _WORKTREE_SEG not in str(root) + "/":
+        if root != main:
+            return (
+                f"consumer propagation must run from {where}, not from {root}, a worktree "
+                f"outside .claude/worktrees/. Create one: git -C {main} worktree add "
+                f"--detach {main}/.claude/worktrees/propagate origin/master"
+            )
+        return (
+            f"consumer propagation must run from {where}, not from {root}: the main "
+            f"clone is the runtime canon other sessions share, so its branch and "
+            f"uncommitted files are not the merged canon. Create one: git -C {main} "
+            f"worktree add --detach {main}/.claude/worktrees/propagate origin/master"
+        )
+    default = _origin_default(root)
+    if default is None:
+        return f"{root}: cannot resolve origin's default branch (refs/remotes/origin/HEAD); propagation refused."
+    rc_h, head = _git(root, "rev-parse", "HEAD")
+    rc_t, tip = _git(root, "rev-parse", f"origin/{default}")
+    rc_d, dirty = _git(root, "status", "--porcelain", "--untracked-files=no")
+    if rc_h or rc_t or rc_d:
+        return f"{root}: git could not read HEAD, origin/{default} or the tree status; propagation refused."
+    if head != tip:
+        return (
+            f"{root} is at {head[:8]}, not origin/{default} ({tip[:8]}): consumers get "
+            f"merged canon only. Merge first (Gate 2), fetch, then propagate from {where}."
+        )
+    if dirty:
+        return f"{root} has uncommitted tracked changes; consumers get committed canon only:\n{dirty[:600]}"
+    return None
+
+
+def propagation_scope(manifest_path: Path) -> tuple[bool, bool, str | None]:
+    """Where `propagate-mirrors.py --apply` may write from this tree (#577 Stage 5 R12/R55).
+
+    Returns (this_tree, consumers, problem). `this_tree` covers the writes that
+    land in this checkout: the dotfiles self-row copies and the divergent-mirror
+    hashes in this manifest. `consumers` covers mirror files in consumer repos.
+    K8 refused the whole --apply from a solo branch, so the self-row sync the
+    branch needs and the hash refresh a divergent-mirror edit needs had no legal
+    run anywhere; and a post-merge run that refreshed a hash left the clean
+    propagation worktree dirty, with nothing landing that hash on master.
+
+    - not a git checkout (a test fixture): both, as before K8.
+    - the main clone: neither (`problem` says why); it is the shared runtime canon.
+    - a clean linked worktree at origin's default: consumers only. Drift in this
+      tree there means master itself is out of step; it is fixed on a branch.
+    - any other linked worktree (a solo branch, a dirty or stale tree): this
+      tree only, committed with the change; consumers wait for the merge.
+    """
+    problem = propagation_source_problem(manifest_path)
+    if problem is None:
+        root = resolve_dotfiles_root(manifest_path).resolve()
+        return (not (root / ".git").exists(), True, None)
+    if in_linked_worktree(manifest_path):
+        return (True, False, problem)
+    return (False, False, problem)
+
+
+def sync_hint(repo: str, canonical: str) -> str:
+    """The remediation command for a drifted mirror, scoped to where it may run (#577 R13).
+
+    A dotfiles self-row copy and a divergent hash are written in the checkout that
+    carries the change; a consumer copy only from a clean origin/master worktree after
+    the Gate-2 merge. One hint for every kind sent the self-row fix to a tree where it
+    cannot help (the self-row writes into whatever tree runs it).
+
+    A consumer row names the tool repo-relative: the tool reads the manifest beside
+    itself, so the absolute path a consumer's vendored checker resolved (the shared main
+    clone) ran against the main clone's manifest and was refused from every tree
+    (#577 Stage 5 fix review r2).
+    """
+    if repo == "dotfiles":
+        return f"Run in this checkout: python {propagate_tool_path()} --apply --repo dotfiles --file {canonical}"
+    cmd = f"python {_PROPAGATE_TOOL_REL} --apply --repo {repo} --file {canonical}"
+    return (f"Run in dotfiles: {cmd} (consumer files: from a clean origin/master worktree "
+            f"under .claude/worktrees/ after the Gate-2 merge; a divergent hash: in the "
+            f"dotfiles checkout that carries the edit; #577 K8)")
+
+
+def fleet_apply_hint(tool: str) -> str:
+    """Where a consumer-writing propagation run goes (#577 K8; fix review R49).
+
+    The writers refuse every tree but a clean dotfiles worktree at origin's default
+    branch, so a bare "Run propagate-x --apply" sent the reader to a command that
+    fails from the main clone or a solo branch.
+    """
+    flag = "--all" if tool == "propagate-template.py" else "--apply"
+    return (f"run `python SST3/scripts/{tool} {flag}` in dotfiles after the Gate-2 merge, "
+            f"from a clean worktree at origin's default branch under .claude/worktrees/ "
+            f"(#577 K8: it refuses any other tree)")
+
+
+SELF_ROW_APPLY_HINT = ("run in this dotfiles checkout: python SST3/scripts/propagate-mirrors.py "
+                       "--apply --repo dotfiles")
 
 
 _PROPAGATE_TOOL_REL = "SST3/scripts/propagate-mirrors.py"
@@ -1186,8 +1395,7 @@ def check_mirror_drift(
                 # Ralph Tier 2 round 8: "beside this module" was ALSO wrong for the
                 # dotfiles self-row, where this module is mirrored flat but the tool
                 # is not. propagate_tool_path() tests for the file instead.
-                f"If intentional, run: python {propagate_tool_path()} "
-                f"--apply --repo {mirror['repo']} --file {entry['canonical']}"
+                f"If intentional, record it. {sync_hint(mirror['repo'], entry['canonical'])}"
             )
         return False, ""
 
@@ -1205,8 +1413,7 @@ def check_mirror_drift(
             # dotfiles#552 AC 3.1 — same runtime resolution as the divergent
             # branch above, so both remediation hints agree. Verified by executing
             # the printed command, not by asserting the two branches match.
-            f"Run: python {propagate_tool_path()} "
-            f"--apply --repo {mirror['repo']} --file {entry['canonical']}"
+            f"{sync_hint(mirror['repo'], entry['canonical'])}"
         )
     return False, ""
 

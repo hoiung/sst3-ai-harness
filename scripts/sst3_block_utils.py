@@ -23,6 +23,8 @@ Public API (AC 1.3 export list — do NOT rename):
         -> str
     atomic_write(path, content, encoding="utf-8")
         -> None
+    duplicate_hook_ids(content, marker_start, marker_end)
+        -> list[tuple[str, int]]  (#577 Stage 5 R45/R53)
 
 Line-anchored marker contract (Issue #493 AC 1.2): markers match only
 when the marker substring appears at the start of a (lstrip'ed) line.
@@ -38,7 +40,60 @@ treat that as first-apply insertion (propagate-block) or a hard error
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
+
+# A pre-commit hook entry's id: `- id: x`, `- id: "x"`, an `id:` key that is not the
+# entry's first (or follows a bare `-` line), and a flow mapping `- {name: n, id: x}`. A
+# `# - id:` comment is not one. Only the first form was read until #577 Stage 5 fix
+# review r2, so a hand copy in another shape sat beside the block unrefused.
+_HOOK_ID_LINE = re.compile(r"""^\s*(?:-\s+)?id:\s*["']?([^"'\s#,}]+)""")
+_HOOK_ID_FLOW = re.compile(r"""^\s*-\s+\{[^}#]*?\bid:\s*["']?([^"'\s#,}]+)""")
+
+
+def _hook_id(line: str) -> str | None:
+    m = _HOOK_ID_LINE.match(line) or _HOOK_ID_FLOW.match(line)
+    return m[1] if m else None
+
+
+def duplicate_hook_ids(content: str, marker_start: str, marker_end: str,
+                       file_text: str | None = None) -> list[tuple[str, int]]:
+    """Hook ids the managed block defines that a line OUTSIDE the block defines too.
+
+    Returns ``(id, 1-based line)`` per outside duplicate; ``[]`` when either marker is
+    absent. A managed block replaces the hand-written hooks of the same id, but the
+    first apply only inserts the block (#577 Stage 5 fix review R45/R53): the hand
+    copy kept running beside it with the defects the block fixed, and pre-commit skips
+    by id, so the `SKIP=<id>` the old copy asks for switched off the block too.
+
+    `file_text`: the file on disk, when `content` is the text an apply would write. The
+    ids come from `content`'s block, the lines from the file the operator edits; read
+    from the would-be text, a block that changed size above the hand copy named the
+    wrong line to delete (fix review r2).
+    """
+    start, end = find_boundary_lines(content, marker_start, marker_end)
+    if start == -1 or end == -1:
+        return []
+    lines = content.splitlines()
+    inside = {i for line in lines[start + 1:end] if (i := _hook_id(line))}
+    if file_text is not None:
+        start, end = find_boundary_lines(file_text, marker_start, marker_end)
+        lines = file_text.splitlines()
+    return [(i, n + 1) for n, line in enumerate(lines)
+            if not (start != -1 and end != -1 and start <= n <= end)
+            and (i := _hook_id(line)) is not None and i in inside]
+
+
+def duplicate_hook_ids_problem(content: str, marker_start: str, marker_end: str,
+                               file_text: str | None = None) -> str | None:
+    """The refusal / drift text for duplicate_hook_ids, or None."""
+    dups = duplicate_hook_ids(content, marker_start, marker_end, file_text)
+    if not dups:
+        return None
+    where = ", ".join(f"{i} (line {n})" for i, n in dups)
+    return (f"hand-written hook(s) {where} outside the managed block carry ids the block "
+            f"defines. Delete those entries: the block replaces them, and pre-commit skips "
+            f"by id, so SKIP=<id> would switch off both")
 
 
 def find_boundary_lines(

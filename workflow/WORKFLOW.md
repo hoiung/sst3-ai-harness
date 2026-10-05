@@ -88,7 +88,7 @@
   - From the worktree: `git push origin <solo-branch>` then `git push origin <solo-branch>:master` (server-side FF of `origin/master`)
   - On non-FF reject: `git fetch origin master` → `git rebase origin/master` (in worktree) → retry (≤3, NEVER `--force`); NO shared-tree branch-switch/local-merge/reset
   - `ExitWorktree action:keep` until `git ls-remote origin master` == solo tip, then `action:remove`; `git push origin --delete <solo-branch>`; `git fetch --prune`
-  - **Mirror Propagation Routing (AC 4.10)**: run `propagate-mirrors.py --apply` ONLY from the merged main clone after the Gate-2 fast-forward is confirmed; verify `git -C <main-clone> rev-list --count origin/master..master` returns 0 before any mirror write. NEVER run `--apply` from inside the Stage-4 worktree — a worktree apply is non-authoritative for the cross-clone mirror.
+  - **Mirror Propagation Routing (AC 4.10)**: consumer writes (propagate-mirrors/-block/-template) run ONLY after the confirmed Gate-2 fast-forward, from a clean `.claude/worktrees/` worktree at origin/master, NEVER the main clone (the shared runtime canon); any other tree defers or refuses them. On a solo branch `--apply` writes only that tree, committed with the change (#577 K8).
 - [ ] POST `user-review-checklist.md` from TEMPLATE — not made up, ALL sections mandatory, NONE optional
 - [ ] Work through checklist WITH user
 - [ ] Fix any gaps found — no deferrals, no excuses unless confirmed false positive

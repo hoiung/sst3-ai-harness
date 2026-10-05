@@ -1,6 +1,6 @@
 # SST3 Anti-Patterns
 
-> 28 documented failure modes (#1–#30; #5 and #11 are subsumed stubs — their content merged into #3+#6 and #13+#14c respectively — retained so cross-reference numbering stays stable). Origin: Issue #79.
+> Documented failure modes, numbered from #1 (#5 and #11 are subsumed stubs — their content merged into #3+#6 and #13+#14c respectively — retained so cross-reference numbering stays stable). Origin: Issue #79.
 
 <!-- stages: 4 -->
 ## Anti-Pattern #1: Propagation Failures
@@ -13,14 +13,14 @@
 - `../dotfiles/SST3/drift-manifest.json` lists every vendored file with required transforms (or `divergent + mirror_sha256` for hand-authored structural rewrites)
 - `<your-dotfiles-clone>/SST3/scripts/propagate-mirrors.py --validate` runs in dotfiles pre-commit — for `transforms` mode files, fails when canonical edit is staged without the mirror synced. **Caveat**: `divergent` mode compares mirror sha256 against the manifest-recorded hash only — canonical content never enters the comparison. Hand-edit divergent mirror copies in the same commit and run `--apply` to refresh the hash.
 - `../scripts/check-mirror-drift.py` runs in each mirror pre-commit — fails when mirror drifted from canonical after expected transforms, OR (divergent mode) when mirror sha256 no longer matches the recorded hash
-- `<your-dotfiles-clone>/SST3/scripts/propagate-mirrors.py --apply` syncs transform-mode mirrors AND refreshes divergent-mode hashes; error messages from both hooks include the exact invocation
+- `propagate-mirrors.py --apply` syncs the self-row and divergent hashes on a branch, consumer mirrors after the merge from a clean origin/master worktree; hook errors name the command
 - New canonical files: validator warns unless the file is in `unmirrored_canonical_files` allow-list or has a mirror entry
 
 **Prevention (behavioural — still apply alongside automation)**:
 - ✓ DO: Edit canonical in dotfiles/SST3/, propagate via script, never hand-edit mirrors
 - ✓ DO: Verify per-phase Ralph Review catches any silent bypass
 - ✗ DON'T: Make direct mirror edits without updating canonical
-- ✗ DON'T: Use `SKIP=<hook-id> git commit` without filing an issue for the underlying false positive
+- ✗ DON'T: `SKIP=<hook-id>` a false positive without filing an issue for it (Gate-2 step 6 excepted)
 
 **Self-Healing**: Automated hooks catch drift on commit. Residual occurrences → escalate after 3 → trigger full cross-repo audit.
 
@@ -413,7 +413,7 @@ Phase checkpoints post a comment to the Issue — they DO NOT pause work. Post t
 11. Markdown voice-prose AI-tells — STANDARDS.md "Voice Content Protection (Marker-Driven)", AP #15
 12. AC prose → code file:line evidence mapping — WORKFLOW.md Stage 4, `user-review-checklist.md` §1
 
-**How to apply, dynamic-dispatch 5 subtypes, Ralph tier-split enforcement, RESULT-block discipline, fallback recipes, `mcp_graph_available` field rule, "wrapper-lane available" precise definition**: canonical procedure lives in STANDARDS.md "Structural Code Queries" (pre-query gate + three-signal contract + raw-tool cross-validation moments + AI-agent fallback heuristic + RESULT-block first-line rule + Issue #456 exit-127 semantics); `../reference/tool-selection-guide.md` "Decision Tree: Code-Understanding Queries" (4-quadrant matrix); `../docs/guides/code-query-playbook.md` (dynamic-dispatch 5-subtype belt-and-braces at L454, fallback recipes, synonym sweeps, cadence). Ralph haiku/sonnet/opus review files contain per-tier under-use + over-trust enforcement criteria (haiku=under-use evidence gate, sonnet=under-use+over-trust logic check, opus=full compliance).
+**How to apply, dynamic-dispatch 5 subtypes, Ralph tier-split enforcement, RESULT-block discipline, fallback recipes**: canonical procedure lives in STANDARDS.md "Structural Code Queries" (pre-query gate + three-signal contract + raw-tool cross-validation moments + AI-agent fallback heuristic + Issue #456 exit-127 semantics); `../reference/tool-selection-guide.md` "Decision Tree: Code-Understanding Queries" (4-quadrant matrix); `../docs/guides/code-query-playbook.md` (dynamic-dispatch 5-subtype belt-and-braces, fallback recipes, synonym sweeps, cadence). `mcp_graph_available` first-line rule + availability test: `../ralph/_wrapper-lane-preconditions.md`. Ralph haiku/sonnet/opus review files contain per-tier under-use + over-trust enforcement criteria (haiku=under-use evidence gate, sonnet=under-use+over-trust logic check, opus=full compliance).
 
 **Self-Healing**: caught reaching for `Agent(Explore)` on a who-calls question in a supported language with the wrapper-lane available → stop, run `bash $SST3/sst3-code-callers.sh` first, narrow the subagent prompt with the result. Caught trusting a "no results" without spot-checking → read one matching file from the area and confirm, then proceed.
 
@@ -464,9 +464,9 @@ The manual `mcp__github-checkbox__update_issue_checkbox` invocation is the canon
 
 **Cadence — two-tier rule**:
 - **Tier A — Phase-deliverable checkboxes** (concrete file edit / commit / function / section / example named in Acceptance Criteria Phase 1..N): **STRICT interleaving required**. Close each with `update_issue_checkbox` + evidence within the same phase's commit window. Cluster-at-end violates AP #20.
-- **Tier B — Cross-cutting meta-checkboxes** (Triple-Check Gate items, Engineering Requirements meta-items, Cleanup Requirements, Verification Loop self-gates, PREREQUISITE CHECKPOINT, Expected Behavior post-conditions): **batched-at-end acceptable**. These describe conditions observable only post-all-phases — closing them mid-phase would be dishonest. Ralph Opus (Tier 3) audits this distinction via `../ralph/opus-review.md` "Governance Drift Audit" classification heuristic.
+- **Tier B — Cross-cutting meta-checkboxes** (Triple-Check Gate items, Engineering Requirements meta-items, Cleanup Requirements, Verification Loop self-gates, PREREQUISITE CHECKPOINT, Expected Behavior post-conditions): **batched-at-end acceptable**. These describe conditions observable only post-all-phases — closing them mid-phase would be dishonest. Ralph Opus (Tier 3) audits this distinction via `../ralph/opus-review.md` "Checkbox-MCP Drift Audit" classification heuristic.
 
-**See also**: STANDARDS.md "MCP Tool Schema Loading" (canonical ToolSearch rule), STANDARDS.md "Governance Evidence Signal (Canonical)" (canonical audit signal — Proof of Work body section, added #431 Phase 1), `../reference/tool-selection-guide.md` Example 2 (canonical evidence-requirements table), AP #17 (Keep Going Until Done — complementary discipline), `../ralph/opus-review.md` Governance Drift Audit (codependent — do not edit in isolation, see #429 Phase 9 + #431 Phase 2a).
+**See also**: STANDARDS.md "MCP Tool Schema Loading" (canonical ToolSearch rule), STANDARDS.md "Governance Evidence Signal (Canonical)" (canonical audit signal — Proof of Work body section, added #431 Phase 1), `../reference/tool-selection-guide.md` Example 2 (canonical evidence-requirements table), AP #17 (Keep Going Until Done — complementary discipline), `../ralph/opus-review.md` Checkbox-MCP Drift Audit (codependent — do not edit in isolation, see #429 Phase 9 + #431 Phase 2a).
 
 ---
 

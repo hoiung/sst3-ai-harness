@@ -121,8 +121,12 @@ emit_allow() {
 # ---------------------------------------------------------------- heredoc data sink --------
 # is_sink_stmt <statement line, heredoc operator removed> — true when it only writes to a
 # plain file: `cat >FILE`, `cat >>FILE`, or `tee [-a|--append] FILE [>/dev/null]`.
+# Only space and tab count as blanks (#577 Stage 5 H1): bash splits words on those alone, so a
+# carriage return, form feed or vertical tab after the quoted delimiter becomes PART of bash's
+# delimiter (`EOF\r`). [[:space:]] accepted them, the guard ended the body at a later plain
+# `EOF`, and bash ran the lines in between unclassified (a real forced push, measured).
 SINK_FILE='[A-Za-z0-9_./~+-]+'
-SINK_RE="^[[:space:]]*(cat[[:space:]]*>>?[[:space:]]*${SINK_FILE}|tee[[:space:]]+(-a[[:space:]]+|--append[[:space:]]+)?${SINK_FILE}([[:space:]]*>[[:space:]]*/dev/null)?)[[:space:]]*$"
+SINK_RE="^[[:blank:]]*(cat[[:blank:]]*>>?[[:blank:]]*${SINK_FILE}|tee[[:blank:]]+(-a[[:blank:]]+|--append[[:blank:]]+)?${SINK_FILE}([[:blank:]]*>[[:blank:]]*/dev/null)?)[[:blank:]]*$"
 is_sink_stmt() {
   # shellcheck disable=SC2016  # '$(' is the literal command-substitution opener being REJECTED, not an expansion.
   case "$1" in *';'*|*'&&'*|*'||'*|*'|'*|*'$('*|*'`'*) return 1 ;; esac
@@ -149,7 +153,7 @@ heredoc_sink_head() {
   # <<-). Anything after that terminator is a second statement: classify the whole command.
   while IFS= read -r line; do
     if (( found )); then
-      [[ "$line" =~ ^[[:space:]]*$ ]] || return 1
+      [[ "$line" =~ ^[[:blank:]]*$ ]] || return 1
       continue
     fi
     [[ -n "$dash" ]] && line="${line#"${line%%[!$'\t']*}"}"
@@ -167,8 +171,10 @@ heredoc_sink_head() {
 # backslash-continued lines first, so a continuation cannot hide the flag on the next line.
 _bf_ns=$'[^;&|\n]'
 _bf_git="(^|[^[:alnum:]_-])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+branch[[:space:]](${_bf_ns}*[[:space:]])?"
-_bf_del='(--delete|-[[:alpha:]]*d[[:alpha:]]*)'
-_bf_frc='(--force|-[[:alpha:]]*f[[:alpha:]]*)'
+# git takes any unambiguous prefix of a long option: --del/--dele/--delet are --delete, and
+# --forc is --force (--for and --fo are also --format, so git rejects them).
+_bf_del='(--del(e(te?)?)?|-[[:alpha:]]*d[[:alpha:]]*)'
+_bf_frc='(--forc(e)?|-[[:alpha:]]*f[[:alpha:]]*)'
 _bf_gap="[[:space:]](${_bf_ns}*[[:space:]])?"
 BRANCH_FD_RE="${_bf_git}(-[[:alpha:]]*D[[:alpha:]]*|-[[:alpha:]]*(d[[:alpha:]]*f|f[[:alpha:]]*d)[[:alpha:]]*|${_bf_del}${_bf_gap}${_bf_frc}|${_bf_frc}${_bf_gap}${_bf_del})([^[:alnum:]_-]|$)"
 BR_SINGLE_RE='^[[:space:]]*git[[:blank:]]+branch([[:blank:]]+[A-Za-z0-9._/+-]+)+[[:space:]]*$'
@@ -212,6 +218,12 @@ merged_branch_delete() {
     BR_REASON="origin's default branch is unresolvable in $cwd (no refs/remotes/origin/HEAD)"
     return
   fi
+  # origin/HEAD is a local symref anyone can repoint (`git symbolic-ref refs/remotes/origin/HEAD
+  # refs/heads/<x>` made an unmerged branch "merged", measured): it must name a remote branch.
+  if [[ ! "$def" =~ ^refs/remotes/origin/[^/]+$ || "$def" == refs/remotes/origin/HEAD ]]; then
+    BR_REASON="refs/remotes/origin/HEAD points at $def, not at a branch of origin"
+    return
+  fi
   if ! git -C "$cwd" rev-parse --verify --quiet "refs/heads/$name^{commit}" >/dev/null 2>&1; then
     BR_REASON="$cwd has no local branch $name"
     return
@@ -222,6 +234,43 @@ merged_branch_delete() {
     1) BR_REASON="refs/heads/$name is not merged into $def in $cwd" ;;
     *) BR_REASON="the merge check failed in $cwd (git merge-base exit $rc)" ;;
   esac
+}
+
+# ---------------------------------------------------------------- structural pass ----------
+# #577 Stage 5 H1, then the fix review (R27-R32). The regexes below anchor `git` directly before
+# the verb and spell each flag in full. H1 added a `read -ra` pass for options before the verb,
+# abbreviations and clusters; the review got past that with quoting (`git "push" -f`), wrappers
+# (sh -c, eval, $( ), a here-string, a pipe into bash), git config options (`-c ALIAS.p=...`,
+# `-c remote.origin.mirror=true`, --config-env, GIT_CONFIG_*), other local spellings of
+# `push . :ref`, branch-moving verbs (branch -M/-C onto an existing branch, checkout -B,
+# switch -C, update-ref, fetch +src:branch) and rm long-option prefixes, each measured against
+# real git. The pass now reads the command with the shared shell reader _lib-shellcmd.py (the
+# shell's own quoting, operators and nested commands) and gets one record per destructive
+# statement. It adds DENYs only; the regexes stay as written. A branch force-delete it finds
+# goes through the merged-branch check like the regex's.
+# A part the reader cannot see (opaque: a script piped in from another program, a process
+# substitution, words that expand at run time), or a reader that is missing or failed, sends
+# the whole text through the plain patterns again with quotes and backslashes removed, so a
+# quoted verb there is still denied (#577 Stage 5 fix review 2). The reader being off is
+# told after the WARN class below, not instead of it.
+STRUCT_REASON=""
+STRUCT_BRANCH=0
+STRUCT_OFF=0
+STRUCT_OPAQUE=""
+struct_scan() {
+  local lib out
+  lib="$(dirname "${BASH_SOURCE[0]}")/_lib-shellcmd.py"
+  if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$lib" ]] \
+     || ! out="$(printf '%s' "$1" | python3 "$lib" destructive --cwd "$PAYLOAD_CWD" 2>/dev/null)"; then
+    audit struct-not-run "python3, $lib or the shell reader failed"
+    STRUCT_OFF=1
+    return 0
+  fi
+  [[ -n "$out" ]] || return 0
+  STRUCT_REASON="$(printf '%s\n' "$out" | jq -r 'select(has("kind") and .kind != "branch-force-delete") | .reason' 2>/dev/null | head -n 1)"
+  STRUCT_OPAQUE="$(printf '%s\n' "$out" | jq -r 'select(has("opaque")) | .opaque' 2>/dev/null | head -n 1)"
+  printf '%s\n' "$out" | jq -e -s 'any(.[]; .kind == "branch-force-delete")' >/dev/null 2>&1 && STRUCT_BRANCH=1
+  return 0
 }
 
 raw_stdin="$(cat 2>/dev/null || true)"
@@ -247,6 +296,7 @@ fi
 
 CMD="$(printf '%s' "$raw_stdin" | jq -r '.tool_input.command // empty' 2>/dev/null)"
 [[ -z "$CMD" ]] && exit 0   # Non-Bash tool / no command field — nothing to classify.
+PAYLOAD_CWD="$(printf '%s' "$raw_stdin" | jq -r '.cwd // empty' 2>/dev/null)"
 
 # Allowlist — explicit, exact-form: paper/live/DS systemctl restarts, the WHOLE command.
 if [[ "$CMD" =~ ^[[:space:]]*sudo[[:space:]]+systemctl[[:space:]]+restart[[:space:]]+pb-(paper-controller|live-controller|data-service-rs[0-9a-z-]*)[[:space:]]*$ ]]; then
@@ -262,7 +312,11 @@ fi
 
 # DENY class — irreversible. Checked BEFORE WARN so a force-push with
 # --no-verify (which would also WARN) still DENY-blocks.
-if [[ "$OVERRIDE" != "1" ]]; then
+# plain_checks <text> — the plain patterns, on the command text as given or (for a command
+# the reader could not see whole) with quotes and backslashes removed.
+BR_CHECKED=0
+plain_checks() {
+  local text="$1"
   # git push --force / --force-with-lease / -f / refspec `+ref:ref`.
   # `-f` is git's documented short form for --force (`man git-push`); refspec `+`
   # is the documented force-update syntax (`git-push(1)` §<refspec>). Both bypass
@@ -271,40 +325,82 @@ if [[ "$OVERRIDE" != "1" ]]; then
   # 4 force forms. `-f` boundary uses `[^[:alnum:]_-]|$` AFTER to avoid matching
   # `-fast` or `-foo`; preceded by `[[:space:]]+` after `push` to anchor it as
   # a standalone arg (not a substring of `--force`).
-  if [[ "$CLASSIFY" =~ (^|[^[:alnum:]_-])git[[:space:]]+push[[:space:]]+(.*[[:space:]])?(--force([^-]|$)|--force-with-lease|-f([^[:alnum:]_-]|$)|\+[A-Za-z0-9_/.+-]+:[A-Za-z0-9_/.+-]+) ]]; then
+  if [[ "$text" =~ (^|[^[:alnum:]_-])git[[:space:]]+push[[:space:]]+(.*[[:space:]])?(--force([^-]|$)|--force-with-lease|-f([^[:alnum:]_-]|$)|\+[A-Za-z0-9_/.+-]+:[A-Za-z0-9_/.+-]+) ]]; then
     emit_deny "git push --force / -f / --force-with-lease / refspec + (irreversible)" "$CMD"
   fi
   # git filter-repo (history rewrite — dotfiles#497 class).
-  if [[ "$CLASSIFY" =~ (^|[^[:alnum:]_-])git[[:space:]]+filter-repo([^[:alnum:]_-]|$) ]]; then
+  if [[ "$text" =~ (^|[^[:alnum:]_-])git[[:space:]]+filter-repo([^[:alnum:]_-]|$) ]]; then
     emit_deny "git filter-repo (history rewrite, irreversible to public mirrors)" "$CMD"
   fi
   # git reset --hard.
-  if [[ "$CLASSIFY" =~ (^|[^[:alnum:]_-])git[[:space:]]+reset[[:space:]].*--hard([^[:alnum:]_-]|$) ]]; then
+  if [[ "$text" =~ (^|[^[:alnum:]_-])git[[:space:]]+reset[[:space:]].*--hard([^[:alnum:]_-]|$) ]]; then
     emit_deny "git reset --hard (uncommitted-work loss)" "$CMD"
   fi
   # git branch force-delete — allowed only for one branch confirmed merged (header).
-  BR_SUBJECT="${CLASSIFY//$'\\\n'/ }"
+  BR_SUBJECT="${text//$'\\\n'/ }"
   if [[ "$BR_SUBJECT" =~ $BRANCH_FD_RE ]]; then
+    BR_CHECKED=1
     merged_branch_delete
     [[ -n "$BR_REASON" ]] && emit_deny "git branch force-delete not confirmed merged: $BR_REASON" "$CMD"
     audit allow-merged-branch "$CMD"
   fi
   # rm -rf / — root or absolute-path bombing pattern.
-  if [[ "$CLASSIFY" =~ (^|[^[:alnum:]_-])rm[[:space:]]+(-[A-Za-z]*[rR][A-Za-z]*[fF][A-Za-z]*|-[A-Za-z]*[fF][A-Za-z]*[rR][A-Za-z]*)([[:space:]].+)?[[:space:]]+/($|[^.]) ]]; then
+  if [[ "$text" =~ (^|[^[:alnum:]_-])rm[[:space:]]+(-[A-Za-z]*[rR][A-Za-z]*[fF][A-Za-z]*|-[A-Za-z]*[fF][A-Za-z]*[rR][A-Za-z]*)([[:space:]].+)?[[:space:]]+/($|[^.]) ]]; then
     emit_deny "rm -rf / (filesystem destruction)" "$CMD"
   fi
   # DROP TABLE (SQL embedded in shell args or scripts).
-  if [[ "$CLASSIFY" =~ (DROP|drop)[[:space:]]+(TABLE|table)([[:space:]]|;|$) ]]; then
+  if [[ "$text" =~ (DROP|drop)[[:space:]]+(TABLE|table)([[:space:]]|;|$) ]]; then
     emit_deny "DROP TABLE (SQL destructive)" "$CMD"
+  fi
+  return 0
+}
+if [[ "$OVERRIDE" != "1" ]]; then
+  plain_checks "$CLASSIFY"
+  # Structural pass (header above): the command as the shell reads it.
+  struct_scan "$CLASSIFY"
+  [[ -n "$STRUCT_REASON" ]] && emit_deny "$STRUCT_REASON" "$CMD"
+  if (( STRUCT_OFF )) || [[ -n "$STRUCT_OPAQUE" ]]; then
+    audit unread-recheck "${STRUCT_OPAQUE:-reader off}"
+    plain_checks "${CLASSIFY//[\'\"\\]/}"
+  fi
+  if (( STRUCT_BRANCH && ! BR_CHECKED )); then
+    merged_branch_delete
+    [[ -n "$BR_REASON" ]] && emit_deny "git branch force-delete not confirmed merged: $BR_REASON" "$CMD"
+    audit allow-merged-branch "$CMD"
   fi
 fi
 
-# WARN class — advisory; command runs.
+# WARN class — advisory; command runs. Every match is collected and told in ONE
+# message: emit_warn exits, so a first WARN used to hide the rest (#577 Stage 5 R40:
+# `SKIP=x SST3_SEC_DIFF_BASE=… git commit` never said the SEC base had moved).
+WARNS=()
 if [[ "$CLASSIFY" =~ --no-verify([^[:alnum:]_-]|$) ]]; then
-  emit_warn "--no-verify bypasses pre-commit hooks (audit-trail visible-by-design)" "$CMD"
+  WARNS+=("--no-verify bypasses pre-commit hooks (audit-trail visible-by-design)")
 fi
 if [[ "$CLASSIFY" =~ (^|[^[:alnum:]_-])SKIP=[A-Za-z0-9_,-]+[[:space:]] ]]; then
-  emit_warn "SKIP=<hook> bypasses one or more pre-commit hooks" "$CMD"
+  WARNS+=("SKIP=<hook> bypasses one or more pre-commit hooks")
+fi
+# #577 Stage 5 S11: moving the SEC gate's diff base can hide a finding the base already holds.
+if [[ "$CLASSIFY" =~ (^|[^[:alnum:]_-])SST3_SEC_DIFF_BASE= ]]; then
+  WARNS+=("SST3_SEC_DIFF_BASE= moves the base the SEC gate measures net-new findings from")
+fi
+# #577 Stage 5 R76: the SEC adapter's internal re-run flag; outside that re-run it is refused.
+if [[ "$CLASSIFY" =~ (^|[^[:alnum:]_-])SST3_SEC_IN_PUSHED_TREE= ]]; then
+  WARNS+=("SST3_SEC_IN_PUSHED_TREE= is internal to the SEC pre-push re-run; the adapter refuses it outside that re-run")
+fi
+if (( STRUCT_OFF )); then
+  # #577 Stage 5 fix review 2: this used to exit before the WARN class above was told.
+  off_extra=""
+  (( ${#WARNS[@]} )) && off_extra=" It also: $(IFS=';'; printf '%s' "${WARNS[*]}")."
+  sst3_hook_emit PreToolUse \
+    "F-4 destructive-op-guard: the structural check could not run (python3 or _lib-shellcmd.py is missing, or it failed), so the command you just ran was checked only by the plain patterns, as written and with quotes removed. A wrapped or option-prefixed force-push, reset --hard, branch delete or recursive delete of an absolute path would not have been caught: check that command yourself.$off_extra" \
+    'F-4 destructive-op-guard: structural pass OFF (python3 / _lib-shellcmd.py missing or failed) - reinstall the hooks (<your-dotfiles-clone>/scripts/install.sh).'
+  exit 1
+fi
+if (( ${#WARNS[@]} )); then
+  warn_text="${WARNS[0]}"
+  for w in "${WARNS[@]:1}"; do warn_text+="; $w"; done
+  emit_warn "$warn_text" "$CMD"
 fi
 
 exit 0

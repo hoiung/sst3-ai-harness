@@ -23,8 +23,7 @@ endpoint (a probe must not mutate the system it is probing):
 - `curl -sS -X OPTIONS <url>` (allowed methods) or `curl -sS --head <url>` (existence + headers).
 - `curl -sS <base>/openapi.json | jq '.paths | keys'` (route inventory from the spec).
 - Confirm the param mode (read-only vs read-write, required vs optional) from the OpenAPI schema or a
-  GET probe before writing code that assumes it. (Provenance: an accidental ~50-min backfill fired from
-  a `POST` used as an existence check.)
+  GET probe before writing code that assumes it.
 
 <!-- stages: 5 -->
 ### File / symbol / config absence
@@ -53,9 +52,7 @@ are NEVER load-bearing for a row-existence or row-count assertion. Use an exact 
 `WHERE` predicate that defines the claim) and read its value:
 - `psql -At -c "SELECT COUNT(*) FROM <table> WHERE <predicate>;"` — the authoritative count.
 - A row-existence check can stop early: `SELECT EXISTS (SELECT 1 FROM <table> WHERE <predicate>);`.
-- An estimate that "looks like zero" is not zero. (Provenance: a Stage-5 subagent concluded "442K
-  rows gone, only 16K left" from `n_live_tup=0`; a main-agent `COUNT(*)` then read 1,032,756 — the
-  universe was intact. dotfiles#528 AC 6.2.)
+- An estimate that "looks like zero" is not zero (dotfiles#528 AC 6.2).
 
 <!-- stages: 5 -->
 ### DB-timestamp write frame (tz / bucketing)

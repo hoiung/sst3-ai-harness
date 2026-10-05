@@ -20,8 +20,10 @@ broken variants, not active fixtures).
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -42,22 +44,38 @@ def _sha256(path: Path) -> str:
 
 
 def _walk() -> dict[str, str]:
+    # The files git would commit: tracked plus new-and-not-ignored. A gitignored
+    # __pycache__/ that a local test run leaves in a fixture's input/ is not part
+    # of the fixture; walking the disk counted it, so --check failed on that
+    # machine only and a re-run wrote it into the baseline (#577 Stage 5).
+    # git runs from the top: a commit hook gets GIT_DIR exported, and with GIT_DIR
+    # set git takes the cwd as the top of the work tree, so from the fixtures dir
+    # the root .gitignore was never read.
+    prefix = FIXTURES_DIR.relative_to(REPO_ROOT).as_posix() + "/"
+    listed = subprocess.run(  # sst3-sec: justified: fixed git argv, no shell, no caller input
+        ["git", "ls-files", "-z", "--full-name", "--cached", "--others", "--exclude-standard",
+         "--", prefix],
+        cwd=REPO_ROOT, capture_output=True, check=True,
+    ).stdout
     out: dict[str, str] = {}
-    for child in sorted(FIXTURES_DIR.iterdir()):
-        if not child.is_dir():
-            continue
-        if child.name.startswith("_"):
-            continue  # _known-broken-wrappers, etc.
-        for f in sorted(child.rglob("*")):
-            if not f.is_file():
-                continue
-            rel = f.relative_to(FIXTURES_DIR).as_posix()
+    for raw in sorted({p for p in listed.split(b"\0") if p}):
+        rel = os.fsdecode(raw).removeprefix(prefix)
+        if "/" not in rel or rel.startswith("_"):
+            continue  # root files (this baseline, the README), _known-broken-wrappers, etc.
+        f = FIXTURES_DIR / rel
+        if f.is_file():  # an indexed file deleted from the work tree is reported as DELETED
             out[rel] = _sha256(f)
     return out
 
 
 def main(argv: list[str]) -> int:
-    check_only = "--check" in argv
+    # argparse, not `"--check" in argv`: any other argument (--help, a typo of --check)
+    # rewrote the committed baseline instead of checking it (#577 Stage 5 fix review 2).
+    parser = argparse.ArgumentParser(
+        description="Write the SST3 test-fixture SHA256 baseline, or --check the tree against it.")
+    parser.add_argument("--check", action="store_true",
+                        help="compare the fixture tree with the recorded baseline; write nothing")
+    check_only = parser.parse_args(argv).check
     actual = _walk()
     if check_only:
         if not BASELINE_FILE.exists():

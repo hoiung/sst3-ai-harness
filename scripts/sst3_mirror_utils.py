@@ -127,7 +127,7 @@ _THIS_FILE = Path(__file__).resolve()
 _CANONICAL_MODE = (
     _THIS_FILE.parent.parent.name == "SST3"
     and not (_THIS_FILE.parent / "_private_term_table.py").exists()
-    and os.environ.get("SST3_ALLOW_IDENTITY_SCRUB") != "1"
+    and os.environ.get("SST3_ALLOW_IDENTITY_SCRUB") != "1"  # sst3-sec: justified: operator test flag, compared to "1" only, value never used
 )
 if _CANONICAL_MODE and not _PRIVATE_TERM_PAIRS:
     raise RuntimeError(

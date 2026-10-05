@@ -55,7 +55,7 @@ PRE_PUSH_FIELD_COUNT = 4
 
 
 def main() -> int:
-    if os.environ.get("SST3_PROTECTED_TAG_OVERRIDE") == "1":
+    if os.environ.get("SST3_PROTECTED_TAG_OVERRIDE") == "1":  # sst3-sec: justified: operator bypass flag, compared to "1" only, value never used
         print(
             "[sst3-protected-tag-guard] SST3_PROTECTED_TAG_OVERRIDE=1 — bypassed.",
             file=sys.stderr,

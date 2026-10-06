@@ -185,7 +185,7 @@ BR_SINGLE_RE='^[[:space:]]*git[[:blank:]]+branch([[:blank:]]+[A-Za-z0-9._/+-]+)+
 BR_REASON=""
 merged_branch_delete() {
   local -a tok names=()
-  local a c cwd def name rc
+  local a c cwd def name rc br_fix
   BR_REASON=""
   if [[ ! "$BR_SUBJECT" =~ $BR_SINGLE_RE ]]; then
     BR_REASON="not one plain 'git branch' statement (a git option such as -C / --git-dir / --work-tree, a prefix, a cd, a second statement or quoting) — only the payload cwd's repo is checked"
@@ -219,14 +219,38 @@ merged_branch_delete() {
     BR_REASON="$cwd is not inside a git repository"
     return
   fi
+  # The fix an unresolvable origin/HEAD reason ends with, so it copies as it is. Where an origin
+  # remote exists, fetch then set-head fixes every shape measured in the close-out reviews (no
+  # origin/HEAD, a plain ref, a symref to a branch never fetched or renamed away, a remote never
+  # fetched); naming half of it per guessed shape failed review twice. With no origin URL, fetch
+  # and set-head can only fail, so the remote comes first; `remote add` refuses an origin
+  # section that exists without a URL, which `remote set-url` fills (measured). Only the reason
+  # reads this: the decision stays on the refs, so a clone whose refs resolve is decided as
+  # before. sec-staged-scan.sh base_remedy() names the same commands.
+  br_fix="run: git fetch origin && git remote set-head origin --auto"
+  if ! git -C "$cwd" config --get remote.origin.url >/dev/null 2>&1; then
+    if git -C "$cwd" config --get-regexp '^remote\.origin\.' >/dev/null 2>&1; then
+      br_fix="this clone's origin remote has no URL; set it (git remote set-url origin <url>), then $br_fix"
+    else
+      br_fix="this clone has no origin remote; add it (git remote add origin <url>), then $br_fix"
+    fi
+  fi
   if ! def="$(git -C "$cwd" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)" || [[ -z "$def" ]]; then
-    BR_REASON="origin's default branch is unresolvable in $cwd (no refs/remotes/origin/HEAD; a repo made with git init + push has none: git remote set-head origin --auto)"
+    BR_REASON="origin's default branch is unresolvable in $cwd: refs/remotes/origin/HEAD is missing or is not a symref (a repo made with git init + push has none); $br_fix"
     return
   fi
   # origin/HEAD is a local symref anyone can repoint (`git symbolic-ref refs/remotes/origin/HEAD
   # refs/heads/<x>` made an unmerged branch "merged", measured): it must name a remote branch.
-  if [[ ! "$def" =~ ^refs/remotes/origin/[^/]+$ || "$def" == refs/remotes/origin/HEAD ]]; then
+  # A default branch may hold a slash (team/main): `[^/]+` refused it as "not a branch of
+  # origin", which was false (close-out review 3, measured); git refuses `..` in a ref name.
+  if [[ ! "$def" =~ ^refs/remotes/origin/.+$ || "$def" == refs/remotes/origin/HEAD ]]; then
     BR_REASON="refs/remotes/origin/HEAD points at $def, not at a branch of origin"
+    return
+  fi
+  # A symref to a branch this clone lacks (never fetched, or renamed away on the remote) used
+  # to reach merge-base and refuse with "exit 128" and no fix (close-out review, measured).
+  if ! git -C "$cwd" rev-parse --verify --quiet "$def^{commit}" >/dev/null 2>&1; then
+    BR_REASON="origin's default branch is unresolvable in $cwd: origin/HEAD names $def, which this clone does not have; $br_fix"
     return
   fi
   if ! git -C "$cwd" rev-parse --verify --quiet "refs/heads/$name^{commit}" >/dev/null 2>&1; then
@@ -236,7 +260,13 @@ merged_branch_delete() {
   git -C "$cwd" merge-base --is-ancestor "refs/heads/$name" "$def" 2>/dev/null; rc=$?
   case "$rc" in
     0) ;;
-    1) BR_REASON="refs/heads/$name is not merged into $def in $cwd" ;;
+    # A shallow clone may lack the commits that join the two: "not merged" is then unproven,
+    # and unshallowing settles it (close-out review 3, measured). Still refused either way.
+    1) if [[ "$(git -C "$cwd" rev-parse --is-shallow-repository 2>/dev/null)" == true ]]; then
+         BR_REASON="this shallow clone cannot show refs/heads/$name merged into $def in $cwd; run: git fetch --unshallow origin"
+       else
+         BR_REASON="refs/heads/$name is not merged into $def in $cwd"
+       fi ;;
     *) BR_REASON="the merge check failed in $cwd (git merge-base exit $rc)" ;;
   esac
 }

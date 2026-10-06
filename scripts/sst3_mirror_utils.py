@@ -1059,12 +1059,20 @@ def sibling_canon_problem(manifest_path: Path, caller: Path | None = None) -> st
     if caller_root is not None and caller_root.resolve() == root:
         return None
     default = _origin_default(root)
+    # A symref naming a branch this clone lacks is as unresolvable as none, with the same fix;
+    # it used to fall through to "git could not read ... origin/<gone>" with no fix (#577
+    # close-out review 4, measured).
+    if default is not None and _git(
+        root, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{default}^{{commit}}"
+    )[0]:
+        default = None
     if default is None:
         return (
             f"shared dotfiles {root}: cannot resolve origin's default branch "
-            f"(refs/remotes/origin/HEAD), so it cannot tell whether the canonical "
+            f"(refs/remotes/origin/HEAD is missing, not a symref, or names a branch this "
+            f"clone does not have), so it cannot tell whether the canonical "
             f"files there are current. This check did not run. Fix: "
-            f"git -C {root} remote set-head origin --auto"
+            f"git -C {root} fetch origin && git -C {root} remote set-head origin --auto"
         )
     rc_b, branch = _git(root, "branch", "--show-current")
     rc_n, behind = _git(root, "rev-list", "--count", f"HEAD..origin/{default}")

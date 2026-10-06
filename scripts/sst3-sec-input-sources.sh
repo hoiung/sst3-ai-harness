@@ -88,7 +88,31 @@ PATTERNS=(
     "http_form|request.form"
     "http_query|request.args"
     "cli_argv|sys.argv"
+    # The listed read forms (read/readline/readlines, a for loop, and a list, set or dict
+    # comprehension or generator expression whose first `for` is over the stream, with or
+    # without `if` and further `for` clauses; any other use is NOT reported, e.g.
+    # json.load(sys.stdin), csv.reader(sys.stdin), list(), enumerate(), iter(), next(),
+    # fileinput, `from sys import stdin`, the stream in a later `for` clause), never a
+    # bare `sys.stdin`: isatty(), `stdin=sys.stdin` passed on and an
+    # assignment read nothing, and a guard plus a read on one line would be two findings that
+    # one `justified` marker cannot clear (#577). A loop (a pattern starting `for `) is
+    # reported on its `for` line only, so editing its body is not a net-new finding.
     "stdin|sys.stdin.read(\$\$\$)"
+    "stdin|sys.stdin.readline(\$\$\$)"
+    "stdin|sys.stdin.readlines(\$\$\$)"
+    "stdin|sys.stdin.buffer.read(\$\$\$)"
+    "stdin|sys.stdin.buffer.readline(\$\$\$)"
+    "stdin|sys.stdin.buffer.readlines(\$\$\$)"
+    "stdin|for \$X in sys.stdin: \$\$\$"
+    "stdin|for \$X in sys.stdin.buffer: \$\$\$"
+    "stdin|[\$E for \$X in sys.stdin \$\$\$]"
+    "stdin|[\$E for \$X in sys.stdin.buffer \$\$\$]"
+    "stdin|(\$E for \$X in sys.stdin \$\$\$)"
+    "stdin|(\$E for \$X in sys.stdin.buffer \$\$\$)"
+    "stdin|{\$E for \$X in sys.stdin \$\$\$}"
+    "stdin|{\$E for \$X in sys.stdin.buffer \$\$\$}"
+    "stdin|{\$K: \$V for \$X in sys.stdin \$\$\$}"
+    "stdin|{\$K: \$V for \$X in sys.stdin.buffer \$\$\$}"
     "stdin|input(\$\$\$)"
     "file_open|open(\$\$\$)"
 )
@@ -107,6 +131,7 @@ for spec in "${PATTERNS[@]}"; do
         end_line=$(jq -r '(.range.end.line + 1) // 0' <<< "$record")  # a call can span lines (#577)
         text=$(jq -r '.text // ""' <<< "$record")
         [[ -z "$file" ]] && continue
+        if [[ "$pattern" == "for "* ]]; then end_line="$line"; text="${text%%$'\n'*}"; fi
         emit_record "$file" "$line" "$kind" "$text" "$end_line"
     done < "$AG_OUT"
 done

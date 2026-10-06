@@ -81,12 +81,12 @@
 - [ ] **Cross-repo scope-transfer sweep (AC 5.13)**: when transferring Issue scope to a DIFFERENT repo than where it was drafted, dispatch a single Plan-mode sweep surfacing all cross-repo deltas (paths, repo shape, ACs, branch names, feedback-file naming) BEFORE Stage 4 starts — a scope authored against repo A's layout silently mis-targets repo B. Skip-clean if the implementation repo == the drafting repo.
 - [ ] Implement all phases from issue Acceptance Criteria
 - [ ] Commit after EACH file change: `git add {file} && git commit -m "type: description (#issue)" && git push`
-- [ ] **Consumer-onboarding procedure (AC 4.9)**: before adding a new consumer to any shared table/list (`KNOWN_REPOS`, `CONSUMERS`, `drift-manifest.json`), enumerate the full current membership and diff it against the most-recently-added consumer's registration footprint to catch incomplete prior registrations. <!-- c4:T13 --> Likewise for the Nth member of any set: a presence-matrix check of member N-1 across every surface it was registered in.
+- [ ] **Consumer-onboarding procedure (AC 4.9)**: before adding a new consumer to any shared table/list (`KNOWN_REPOS`, `CONSUMERS`, `drift-manifest.json`), enumerate the full current membership and diff it against the most-recently-added consumer's registration footprint to catch incomplete prior registrations. <!-- c4:T13 --> Likewise for the Nth member of any set: a presence-matrix check of member N-1 across every surface it was registered in. A new consumer also gets the GitHub tag ruleset `SST3 protected local-only tag patterns`, the only thing that stops a local checkpoint tag (`backup/**`, `tmp/**`, `wip/**`, `pre-rebase-*`, `pre-leader-merge-*`, `pre-tool-adoption*`, `v*-pre-tool-adoption`) being pushed: copy it from an existing consumer (`gh api repos/<owner>/<repo>/rulesets/<id>`, then `gh api -X POST repos/<owner>/<new-repo>/rulesets --input <file>` with its `name`, `target`, `enforcement`, `conditions`, `rules` and `bypass_actors`).
 - [ ] Run Verification Loop (repeat until clean — see below)
 - [ ] Run Ralph Review: Haiku → Sonnet → Opus (all 3 mandatory)
 - [ ] Merge BEFORE user review (protects work) — recursion-safe remote fast-forward, NO shared-tree checkout (dotfiles#488 Fix-A / Leader.md Gate 2 / AC 1.3):
   - From the worktree: `git push origin <solo-branch>` then `git push origin <solo-branch>:master` (server-side FF of `origin/master`)
-  - On non-FF reject: `git fetch origin master` → `git rebase origin/master` (in worktree) → retry (≤3, NEVER `--force`); NO shared-tree branch-switch/local-merge/reset
+  - On non-FF reject: `git fetch origin master` → `git rebase origin/master` (in worktree) → retry (≤3, NEVER `--force`); NO shared-tree branch-switch/local-merge/reset (the one write after a dotfiles push is the ff-only catch-up of the runtime canon clone: `gate-2-merge.md` "Branch-switch invariant")
   - `ExitWorktree action:keep` until `git ls-remote origin master` == solo tip, then `action:remove`; `git push origin --delete <solo-branch>`; `git fetch --prune`
   - **Mirror Propagation Routing (AC 4.10)**: consumer writes (propagate-mirrors/-block/-template) run ONLY after the confirmed Gate-2 fast-forward, from a clean `.claude/worktrees/` worktree at origin/master, NEVER the main clone (the shared runtime canon); any other tree defers or refuses them. On a solo branch `--apply` writes only that tree, committed with the change (#577 K8).
 - [ ] POST `user-review-checklist.md` from TEMPLATE — not made up, ALL sections mandatory, NONE optional
@@ -183,7 +183,8 @@ git push origin <solo-branch>
 # Merge + cleanup — recursion-safe remote fast-forward (Leader.md Gate 2 / #488 AC 1.3):
 #   git push origin <solo-branch>:master   # server-side FF of origin/master
 #   on non-FF reject: git fetch origin master; git rebase origin/master (in worktree); retry (<=3, NEVER --force)
-#   NO shared-tree branch-switch / local-merge / reset.
+#   NO shared-tree branch-switch / local-merge / reset (except the ff-only catch-up of the
+#   runtime canon clone after a dotfiles push: gate-2-merge.md "Branch-switch invariant").
 # Then: ExitWorktree action:keep until push landed (git ls-remote origin master == solo tip),
 #   ExitWorktree action:remove; git push origin --delete <solo-branch>; git fetch --prune
 ```

@@ -23,6 +23,8 @@ This gate runs ONLY `git push` / `git fetch` / `git rebase` INSIDE the isolated 
 
 This is the dotfiles#488 chokepoint. The shared-clone branch-switch class moves every concurrent agent's HEAD; the worktree-isolated remote FF is the cure.
 
+One write follows a dotfiles push, by operator ruling (#577 sign-off): the runtime canon clone (where `~/.claude/commands` links) is caught up with `origin/<default>`, because every consumer's drift and SEC hooks refuse while it is behind. That is `git fetch origin` there (on every firing), then `git merge --ff-only origin/<default>` only when the clone is on the default branch with no tracked changes and not ahead; it is never checked out, switched, reset or stashed. The PostToolUse hook `claude/hooks/sst3-canon-ff.sh` does it after any push from a dotfiles checkout; after a push run in the background, the agent does the same by hand. A clone on another branch, with tracked changes or ahead of origin is left as it is and reported to the operator.
+
 <!-- stages: 4 -->
 ## When the rebase race fires
 

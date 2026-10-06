@@ -30,7 +30,8 @@
 #            sst3-stage-order-gate.sh, sst3-canonical-sync-guard.sh, sst3-stash-guard.sh,
 #            _lib-branch-issue.sh (#569 — four of the five the #568 class sweep found and
 #            deliberately left, tracked rather than dropped; #577 removed the fifth);
-#            sst3-destructive-op-guard.sh (#577 AC 1.4 — its merged-branch check runs git).
+#            sst3-destructive-op-guard.sh (#577 AC 1.4 — its merged-branch check runs git);
+#            sst3-canon-ff.sh (#577 sign-off — it fetches and fast-forwards the canon clone).
 #
 # SUBSHELL RULE — read this before deciding a hook is covered transitively.
 # `sst3_scrub_git_env` unsets in the shell that CALLS it. Every helper here and in

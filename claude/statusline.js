@@ -2,7 +2,8 @@
 
 // SST3 statusline (#406 Phase 2 rewrite):
 // - F2.6: CI status cached to ~/.cache/sst3/ci-<hash>.json with TTL, background refresh
-// - F2.7: transcript read ONCE per render, parsed ONCE, reused for findTouchedRepos + token usage
+// - F2.7: transcript never re-read whole per render: the gauge reads its END, the repo
+//   list reads only bytes appended since the last render (dotfiles#578)
 // - F2.8: per-repo git info batched into ONE git call instead of 4-5
 // - F2.9: silent catches replaced with rate-limited debug log
 // - F2.10: gh availability probed once per process, cached in module scope
@@ -93,6 +94,105 @@ function ghAvailable() {
   return _ghAvailable;
 }
 
+// ── Repos touched in the session: an incremental scan (dotfiles#578) ──
+// The GH lines list every repo the session ran `git` in via `cd "<path>"`, back to its
+// first turn, so this needs the WHOLE transcript and cannot share the gauge's tail read.
+// Re-parsing the whole file on every refresh cost seconds of CPU at 350 MB, so the paths
+// found so far are cached per transcript with the byte offset already scanned, and a
+// render parses only what was appended since. A shorter file or a different inode at the
+// same path is scanned again from byte 0. A replacement that lands on a RECYCLED inode and
+// is at least as long is not detected; transcripts are append-only, so it does not arise
+// for them. Paths are returned in first-seen order and are
+// NOT checked here: the caller re-checks each one on every render, as it always has, so a
+// deleted repo still drops off the bar.
+const TOUCHED_SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
+
+function bashGitCdPaths(entry) {
+  const found = [];
+  if (!entry || entry.type !== 'assistant' || !Array.isArray(entry.message?.content)) return found;
+  for (const content of entry.message.content) {
+    if (!content || content.type !== 'tool_use' || content.name !== 'Bash' || !content.input) continue;
+    const command = content.input.command;
+    if (typeof command !== 'string' || !command.includes('git ')) continue;
+    const cdMatch = command.match(/cd\s+"([^"]+)"/);
+    if (cdMatch) found.push(cdMatch[1]);
+  }
+  return found;
+}
+
+function touchedRepoCandidates(transcriptPath) {
+  const hash = crypto.createHash('sha1').update(transcriptPath).digest('hex').slice(0, 12);
+  const cacheFile = path.join(CACHE_DIR, `touched-${hash}.json`);
+  let cache = null;
+  try {
+    cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') logErr('touched-cache-read', e);
+  }
+  let fd;
+  try {
+    fd = fs.openSync(transcriptPath, 'r');
+  } catch (e) {
+    logErr('touched-transcript-open', e);
+    return [];
+  }
+  let paths = [];
+  try {
+    const st = fs.fstatSync(fd);
+    const reuse = Boolean(cache && cache.path === transcriptPath && cache.ino === st.ino
+      && Number.isInteger(cache.offset) && cache.offset <= st.size && Array.isArray(cache.paths));
+    paths = reuse ? cache.paths.slice() : [];
+    const seen = new Set(paths);
+    let offset = reuse ? cache.offset : 0;
+    let carry = Buffer.alloc(0);
+    for (let pos = offset; pos < st.size; pos += TOUCHED_SCAN_CHUNK_BYTES) {
+      const chunk = Buffer.alloc(Math.min(TOUCHED_SCAN_CHUNK_BYTES, st.size - pos));
+      fs.readSync(fd, chunk, 0, chunk.length, pos);
+      const buf = Buffer.concat([carry, chunk]);
+      // Only whole lines are consumed. A trailing partial line (the session mid-write) is
+      // carried, and left unscanned at the end, so the next render reads it complete.
+      const lastNl = buf.lastIndexOf(0x0a);
+      carry = buf.subarray(lastNl + 1);
+      for (const line of buf.subarray(0, lastNl + 1).toString('utf8').split('\n')) {
+        // Cheap pre-filter before JSON.parse: a Bash git command's raw JSON line must
+        // contain both substrings (neither has a character JSON would escape).
+        if (!line.includes('git ') || !line.includes('Bash')) continue;
+        let entry;
+        try {
+          entry = JSON.parse(line);
+        } catch (e) {
+          logErr('touched-jsonl-parse', e);
+          continue;
+        }
+        for (const p of bashGitCdPaths(entry)) {
+          if (!seen.has(p)) { seen.add(p); paths.push(p); }
+        }
+      }
+    }
+    offset = st.size - carry.length;
+    // A cache that cannot be written (full disk, unwritable dir) costs the NEXT render a
+    // rescan, never this render its list: the paths just scanned are returned regardless.
+    if (!reuse || offset !== cache.offset || paths.length !== cache.paths.length) {
+      try {
+        ensureCacheDir();
+        const tmp = `${cacheFile}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify({ path: transcriptPath, ino: st.ino, offset, paths }));
+        fs.renameSync(tmp, cacheFile);
+      } catch (e) {
+        logErr('touched-cache-write', e);
+      }
+    }
+    return paths;
+  } catch (e) {
+    logErr('touched-scan', e);
+    // What was scanned before the failure is a true prefix for THIS file; the cache may
+    // describe a file that has since been replaced at the same path.
+    return paths;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // Read JSON from stdin
 // 1M-context model detection (#509 AC5.1). Marker-first so a future model tagged
 // with a `[1m]` / "1M" marker is caught WITHOUT a code change; the family allowlist
@@ -124,19 +224,20 @@ function renderStatusline() {
     const ccSegments = [];
     const allGhLines = [];
 
-    // ── F2.7: read + parse transcript ONCE ──
+    // ── Transcript: the gauge reads only its END (dotfiles#578) ──
     // Parsed by the shared gauge module since #568 Phase 3 — the loop lived here and in
     // the module, differing only in whether a bad line was logged, which is a callback,
     // not a reason for two copies (AP #10). logErr keeps this file's own error contract.
+    // The repo list below needs the whole session, so it reads through its own cache.
     const transcriptPath = data.transcript_path;
+    const transcriptExists = Boolean(transcriptPath && fs.existsSync(transcriptPath));
     let transcriptEntries = [];
-    if (transcriptPath && fs.existsSync(transcriptPath)) {
+    if (transcriptExists) {
       transcriptEntries = contextGauge
-        ? contextGauge.parseTranscript(transcriptPath, logErr)
+        ? contextGauge.parseTranscriptTail(transcriptPath, logErr)
         : [];
     }
 
-    // ── findTouchedRepos: uses pre-parsed entries ──
     function findTouchedRepos() {
       const repos = new Set();
       const currentDir = data.workspace?.current_dir || data.cwd;
@@ -149,22 +250,13 @@ function renderStatusline() {
         }
       }
 
-      for (const entry of transcriptEntries) {
-        if (entry.type !== 'assistant' || !entry.message?.content) continue;
-        for (const content of entry.message.content) {
-          if (content.type !== 'tool_use' || content.name !== 'Bash' || !content.input) continue;
-          const command = content.input.command;
-          if (!command || !command.includes('git ')) continue;
-          const cdMatch = command.match(/cd\s+"([^"]+)"/);
-          if (!cdMatch) continue;
-          const repoPath = cdMatch[1];
-          if (!fs.existsSync(repoPath)) continue;
-          try {
-            execSync('git rev-parse --git-dir', { cwd: repoPath, stdio: 'ignore' });
-            repos.add(repoPath);
-          } catch (e) {
-            logErr('git-probe-transcript', e);
-          }
+      for (const repoPath of transcriptExists ? touchedRepoCandidates(transcriptPath) : []) {
+        if (!fs.existsSync(repoPath)) continue;
+        try {
+          execSync('git rev-parse --git-dir', { cwd: repoPath, stdio: 'ignore' });
+          repos.add(repoPath);
+        } catch (e) {
+          logErr('git-probe-transcript', e);
         }
       }
       return Array.from(repos);
@@ -350,4 +442,4 @@ if (require.main === module) {
   process.stdin.on('end', renderStatusline);
 }
 
-module.exports = { is1MContext };
+module.exports = { is1MContext, touchedRepoCandidates };

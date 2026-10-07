@@ -140,33 +140,83 @@ function usageFields(u) {
     .map(readTokenField);
 }
 
-// Parse a Claude Code transcript (JSONL). Malformed lines are skipped rather than
-// aborting the parse — a truncated final line is normal while a session is live.
+// How much of the transcript's END the first read takes. Transcripts only grow (a compact
+// appends, it never truncates) and a long session's reaches hundreds of MB; decoding the
+// whole file on every status-bar refresh and every prompt measured ~4 s of CPU and ~1.3 GB
+// per call at 348 MB (dotfiles#578). The read widens itself when this is not enough.
+const TAIL_WINDOW_BYTES = 2_097_152;
+
+// Parse the END of a Claude Code transcript (JSONL): the last TAIL_WINDOW_BYTES, doubling
+// backwards until the parsed suffix holds a usage entry lastAssistantUsage accepts, or the
+// file start is reached. Returns that suffix, in file order.
+//
+// WHY A SUFFIX MEASURES THE SAME AS THE WHOLE FILE. measure() reads two things: the newest
+// qualifying usage entry, and whether a compact boundary sits AFTER it. The suffix ends
+// where the file ends, so its newest qualifying entry is the file's, and everything after
+// that entry — any boundary that could refuse it included — is inside the suffix too. A
+// boundary before it cannot change the verdict, and indices shift by a constant, so
+// measure()'s comparison is unchanged. Cases (br)-(bv) pin it, and dotfiles#578 records
+// the run against full parses of every large transcript on the host.
+//
+// WHY BYTES, NOT ONE STRING. Node cannot hold a string over 536,870,888 characters, so the
+// whole-file readFileSync(..., 'utf8') this replaced threw past ~512 MB and the gauge went
+// blank. Each step decodes only its own region, cut at a newline byte: 0x0A never occurs
+// inside a multi-byte UTF-8 sequence, so the cut never splits a character. One readSync per
+// region is a full read for a regular file below Linux's 2 GiB per-call cap.
+//
+// The first line of a region that does not start at byte 0 is TREATED as incomplete (it
+// usually is; when the region happens to open exactly on a line start it is whole, and is
+// carried all the same): it goes into the next, wider step, never parsed in this one. Other malformed lines are skipped
+// rather than aborting the parse — a truncated final line is normal while a session is live.
 //
 // `onError(category, err)` is optional so statusline.js can route failures into its own
 // rate-limited log while the hook stays silent. It exists so there is ONE parser: the two
 // callers differ only in what they do about a bad line, which is not a reason to keep two
 // copies of the loop.
-function parseTranscript(transcriptPath, onError) {
+function parseTranscriptTail(transcriptPath, onError) {
   const report = typeof onError === 'function' ? onError : () => {};
   if (!transcriptPath) return [];
-  let raw;
+  let fd;
   try {
-    raw = fs.readFileSync(transcriptPath, 'utf8');
+    fd = fs.openSync(transcriptPath, 'r');
   } catch (e) {
     report('transcript-read', e);
     return [];
   }
-  const entries = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      entries.push(JSON.parse(line));
-    } catch (e) {
-      report('transcript-jsonl-parse', e);
+  try {
+    const size = fs.fstatSync(fd).size;
+    let entries = [];
+    let carry = Buffer.alloc(0);
+    let end = size;
+    for (let window = TAIL_WINDOW_BYTES; ; window *= 2) {
+      const start = Math.max(0, size - window);
+      const region = Buffer.alloc(end - start);
+      fs.readSync(fd, region, 0, region.length, start);
+      const buf = Buffer.concat([region, carry]);
+      // Past the first newline when the region starts mid-file; the whole buffer is carried
+      // when it holds no newline at all (indexOf -1 + 1 is 0, so `|| buf.length` takes over).
+      const cut = start > 0 ? (buf.indexOf(0x0a) + 1 || buf.length) : 0;
+      carry = buf.subarray(0, cut);
+      const fresh = [];
+      for (const line of buf.subarray(cut).toString('utf8').split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          fresh.push(JSON.parse(line));
+        } catch (e) {
+          report('transcript-jsonl-parse', e);
+        }
+      }
+      entries = fresh.concat(entries);
+      end = start;
+      if (start === 0) return entries;
+      if (lastAssistantUsage(entries)) return entries;
     }
+  } catch (e) {
+    report('transcript-read', e);
+    return [];
+  } finally {
+    fs.closeSync(fd);
   }
-  return entries;
 }
 
 // The LAST assistant entry carrying usage is the only one that describes the current
@@ -352,7 +402,7 @@ function formatLine(m) {
 }
 
 // Only what has a consumer: is1MContext (statusline.js re-export + statusline.test.js),
-// parseTranscript + measure (statusline.js and the gauge suite), formatLine (the CLI
+// parseTranscriptTail + measure (statusline.js and the gauge suite), formatLine (the CLI
 // below), resolveWindow (the vocabulary enumerator in the gauge suite).
 //
 // ONE_M_FAMILIES is exported for the suite's DRIFT assertion, and for nothing else. Case
@@ -364,7 +414,7 @@ module.exports = {
   is1MContext,
   statusSegment,
   resolveWindow,
-  parseTranscript,
+  parseTranscriptTail,
   measure,
   formatLine,
   ONE_M_FAMILIES,
@@ -372,7 +422,7 @@ module.exports = {
 
 if (require.main === module) {
   const transcriptPath = process.argv[2];
-  const entries = parseTranscript(transcriptPath);
+  const entries = parseTranscriptTail(transcriptPath);
   // The CLI NAMES the transcript it measured, because its output is otherwise shaped
   // exactly like the injected line and the documented way to obtain a path picks the newest
   // transcript on the machine — routinely another session's. `--injected` suppresses it for

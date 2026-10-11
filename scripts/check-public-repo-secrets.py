@@ -71,7 +71,7 @@ except ImportError:
         return False
 
     def get_repo_root() -> Path:
-        result = subprocess.run(
+        result = subprocess.run(  # sst3-sec: justified: git argv list, no shell; fixed git verb, no caller input
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, check=True,
         )
@@ -86,7 +86,7 @@ except ImportError:
                 "script": script, "event": event, "level": level,
                 "fields": fields,
             }, ensure_ascii=True)
-            with open(log_dir / "sst3-events.jsonl", "a") as f:
+            with open(log_dir / "sst3-events.jsonl", "a") as f:  # sst3-sec: justified: appends one JSON line to the local SST3 events log
                 f.write(record + "\n")
         except OSError:
             pass
@@ -609,7 +609,7 @@ def _drop_git_ignored(scan_path: Path, candidates: List[Path]) -> List[Path]:
         except OSError:
             resolved[p] = str(p)
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # sst3-sec: justified: git argv list, the scan path as the -C operand, paths on stdin, no shell
             ["git", "-C", str(scan_path), "check-ignore", "--stdin"],
             input="\n".join(resolved[p] for p in candidates),
             capture_output=True, text=True,
@@ -690,7 +690,7 @@ def _resolve_hashes_path(repo_root: Path) -> Optional[Path]:
     an env override first (CI and unusual layouts), then the canonical
     in-repo location, then the conventional sibling clone.
     """
-    env = os.environ.get("SST3_BLOCKLIST_HASHES")
+    env = os.environ.get("SST3_BLOCKLIST_HASHES")  # sst3-sec: justified: names an optional local hash-map file, read as JSON only
     if env:
         candidate = Path(env).expanduser()
         return candidate if candidate.exists() else None
@@ -762,7 +762,7 @@ def load_file_set(file_path: Optional[Path]) -> Set[str]:
     """Load a text file into a set of non-empty, non-comment lines."""
     result: Set[str] = set()
     if file_path and file_path.exists():
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:  # sst3-sec: justified: reads the scanned file as text to look for secrets; nothing runs it
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
@@ -1380,7 +1380,7 @@ def fetch_issue_or_pr_body(repo: str, number: int) -> str:
       leak). Warn loudly and scan the body we already have.
     """
     import json as _json
-    result = subprocess.run(
+    result = subprocess.run(  # sst3-sec: justified: gh argv list, no shell; repo and issue number come from this scanner's own flags
         ["gh", "api", f"repos/{repo}/issues/{number}"],
         capture_output=True, text=True, check=True,
     )
@@ -1392,7 +1392,7 @@ def fetch_issue_or_pr_body(repo: str, number: int) -> str:
         ) from e
     parts = [f"TITLE: {issue.get('title', '')}", f"BODY:\n{issue.get('body', '')}"]
     try:
-        comments_result = subprocess.run(
+        comments_result = subprocess.run(  # sst3-sec: justified: gh argv list, no shell; repo and issue number come from this scanner's own flags
             ["gh", "api", f"repos/{repo}/issues/{number}/comments", "--paginate"],
             capture_output=True, text=True, check=True,
         )
@@ -1409,7 +1409,7 @@ def fetch_issue_or_pr_body(repo: str, number: int) -> str:
 
 def fetch_commit_messages_since(since_sha: str) -> List[tuple[str, str]]:
     """Fetch commit messages from `since_sha` to HEAD. Returns list of (sha, message)."""
-    result = subprocess.run(
+    result = subprocess.run(  # sst3-sec: justified: git argv list, no shell; the since-SHA is a revision-range operand
         ["git", "log", f"{since_sha}..HEAD", "--format=%H%x00%B%x1e"],
         capture_output=True, text=True, check=True,
     )
@@ -1643,7 +1643,7 @@ def main() -> int:
         repo = args.repo
         if not repo:
             try:
-                r = subprocess.run(
+                r = subprocess.run(  # sst3-sec: justified: gh argv list with fixed arguments, no shell
                     ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
                     capture_output=True, text=True, check=True,
                 )

@@ -277,8 +277,14 @@ PRIVATE_PATH_PATTERNS: List[Dict] = [
 # regex can see), so the only thing that can separate them is an explicit,
 # reviewable per-repo list. Detect-then-allow fails closed on an address nobody
 # has vouched for, which is exactly the shape of the incident.
+#
+# The lookbehind leaves the apostrophe out on purpose (18 Oct 2026): with it in,
+# `'jo@gmail.com'`, the way TypeScript and Python tests write an address, could
+# never start a match, and a real address in a quoted test literal passed this
+# gate. An apostrophe inside a local part (`o'brien@`) is still matched whole:
+# the leftmost match starts at the `o`.
 _EMAIL_RE = re.compile(
-    r"(?<![A-Za-z0-9._%+'-])"
+    r"(?<![A-Za-z0-9._%+-])"
     r"[A-Za-z0-9](?:[A-Za-z0-9._%+'-]*[A-Za-z0-9])?"
     r"@"
     r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
@@ -337,6 +343,9 @@ RESERVED_EMAIL_DOMAINS: frozenset = frozenset({
 })
 RESERVED_EMAIL_SUFFIXES: tuple = (
     ".example", ".invalid", ".test", ".localhost",
+    # a subdomain of a reserved name is reserved too (`f@sub.example.com`); the
+    # leading dot keeps `notexample.com` out
+    ".example.com", ".example.net", ".example.org",
 )
 
 # WhatsApp address (JID) of a person, a group or a linked ID (groupwarden#1):
@@ -344,9 +353,10 @@ RESERVED_EMAIL_SUFFIXES: tuple = (
 # `99999000000444@lid`. The first two are also email-shaped, but `@lid` is not,
 # and a JID is a phone number or member identifier, not a mailbox, so it gets
 # its own kind and message. It is listed BEFORE email so a JID line is reported
-# as one. Allowlisting is by exact literal (see is_pii_allowlisted).
+# as one. Allowlisting is by exact literal (see is_pii_allowlisted). No
+# apostrophe in the lookbehind, as for email: a single-quoted ID is matched.
 _WHATSAPP_JID_RE = re.compile(
-    r"(?<![A-Za-z0-9._%+'-])"
+    r"(?<![A-Za-z0-9._%+-])"
     r"[0-9]{5,20}(?:-[0-9]{5,20})?"
     r"@(?:s\.whatsapp\.net|c\.us|g\.us|lid|newsletter|broadcast)"
     r"(?![A-Za-z0-9-])"

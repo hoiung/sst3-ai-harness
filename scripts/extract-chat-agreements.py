@@ -44,9 +44,12 @@ Exit codes:
   3  a record class was seen that is neither parsed nor knowingly ignored — the
      transcript format has moved and this tool may be dropping operator
      decisions. Fail loud rather than under-report with exit 0 (#555 AC 0.6).
+  4  a session chosen by discovery belongs to another repository: none of its
+     records' `cwd` is at or below the target repo and no message names it
+     (dotfiles#577 T47). Nothing is emitted.
 
-Issue: hoiung/dotfiles#522 Phase 5 (verifier-led chat reconciliation);
-       hoiung/dotfiles#555 AC 0.6 (queue-operation + AskUserQuestion + fail-loud).
+Issue: dotfiles#522 Phase 5 (verifier-led chat reconciliation);
+       dotfiles#555 AC 0.6 (queue-operation + AskUserQuestion + fail-loud).
 """
 
 from __future__ import annotations
@@ -56,6 +59,9 @@ import json
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sst3_mirror_utils import _main_clone_root  # noqa: E402
 
 # Genuine operator prose never starts with these harness wrappers.
 _SKIP_PREFIXES = (
@@ -105,25 +111,65 @@ _PARSED_TYPES = frozenset({"user", "queue-operation"})
 #       jq -r 'select(type=="object") | .type' "$f"
 #   done | sort -u
 #
-# Last derived 2026-07-26 (dotfiles#555 AC 0.6): 16 classes — `user` and
-# `queue-operation` parsed, the 14 below ignored.
+# Last derived 2026-08-27 (dotfiles#569 Stage 5, 33 transcripts): 19 classes — `user` and
+# `queue-operation` parsed, the 17 below ignored. Previously 2026-07-26 (dotfiles#555 AC 0.6):
+# 16 classes / 14 ignored. The three added are itemised at the set itself.
 #
 # `assistant` is ignored for message extraction but IS scanned for
 # AskUserQuestion tool_use ids, which are what identify the operator's menu
 # selections in the following user turn. Ignored here means "carries no
 # operator message", not "never read".
+#
+# Re-derived 2026-08-27 (dotfiles#569 Stage 5) over 33 transcripts: 19 classes, not the 16
+# last recorded. THREE were new, and because this tool fails loud on an unrecognised class it
+# had begun exiting 3 on every transcript this Claude Code build writes — i.e. the Stage-5
+# chat-reconciliation step was hard-down for every future Issue. Each was inspected before
+# being ignored rather than added to silence the error:
+#   atis-latch  5,842 records, keys exactly {atis, sessionId, type}. `atis` is either empty
+#               (5,443) or one opaque versioned token (400). No operator prose on any record.
+#   pr-link        40 records, keys {prNumber, prRepository, prUrl, sessionId, timestamp,
+#               type}. A structured PR reference; no free-text field at all.
+#   cost-state      3 records, telemetry counters (totalCostUSD, modelUsage, token totals).
+#               No free-text field.
+# None can carry an operator decision, so ignoring them loses nothing — which is the standard
+# this set is held to, not "the error went away".
+#
+# Re-derived 2026-10-18 (a Stage-5 extraction) over 91 transcripts: 23 classes, 2 parsed,
+# 21 ignored. The tool exited 3 on that extraction (history-suppression), and the
+# census found three more that this build writes into 77 of the 91. Inspected the same way:
+#   history-suppression  476 records, keys {cause, sessionId, ts, type} (+ vetoedAgainstAccountUuid
+#               on 4). `cause` is a code: migration / chokepoint_veto / restored_owner_mismatch.
+#   api-request   18,307 records. `tail` is a list of blob hashes (56,917, every one hex), `base`
+#               null or a request id, `params` model settings. No free-text field.
+#   api-request-shape  113 records, `shape` = {system, tools}: the system prompt and tool list.
+#   api-request-blob  34,896 records, keys {hash, message, sessionId, type}: one message of a
+#               request as sent to the model, so it DOES carry text. Measured over the 77
+#               transcripts: of 1,301 distinct blob user texts, every operator-typed one is also
+#               in the transcript's own user / queue-operation records (all 41 mid-turn
+#               messages included). The 326 the verbatim comparison did not match are system
+#               reminders (296, one a cross-session message), command wrappers this tool drops
+#               anyway (22, _SKIP_PREFIXES), "Tool loaded." notices (6), and 2 mid-turn
+#               wrappers whose operator line is in queue-operation and user, escaped
+#               differently. Parsing the class would only re-emit messages already read.
 _KNOWN_IGNORED = frozenset({
     "agent-name",
     "ai-title",
+    "api-request",
+    "api-request-blob",
+    "api-request-shape",
     "assistant",
+    "atis-latch",
     "attachment",
     "bridge-session",
+    "cost-state",
     "custom-title",
     "file-history-delta",
     "file-history-snapshot",
+    "history-suppression",
     "last-prompt",
     "mode",
     "permission-mode",
+    "pr-link",
     "relocated",
     "system",
     "worktree-state",
@@ -301,6 +347,18 @@ def extract(records) -> tuple[list[str], set[str]]:
     messages: list[str] = []
     unknown: set[str] = set()
     askq_ids: set[str] = set()
+    # A message typed while the agent is busy is recorded TWICE: once as
+    # `queue-operation`/enqueue when it is queued, and again as a replayed `user`
+    # turn when it is dequeued (this module's own header describes that replay).
+    # Both channels are read on purpose — the replay is not guaranteed to survive
+    # every session boundary — but until dotfiles#569 Stage 5 neither was
+    # de-duplicated against the other, so every such message reached the caller
+    # twice. `_queued_pending` counts enqueued texts not yet matched by their
+    # replay; the `user` branch consumes one instead of appending a second copy.
+    # Deliberately CROSS-channel only: a genuine repeat typed twice arrives as two
+    # `user` records (or two enqueues) and must survive, because "the operator said
+    # it twice" is real signal the reconciliation panel is meant to see.
+    _queued_pending: dict[str, int] = {}
 
     for obj in records:
         if not isinstance(obj, dict):
@@ -341,6 +399,10 @@ def extract(records) -> tuple[list[str], set[str]]:
                 stripped = body.strip()
                 if is_operator_text(stripped):
                     messages.append(stripped)
+                    # Expect a replayed `user` turn for this text later in the file;
+                    # the `user` branch below consumes this credit rather than
+                    # appending a second copy.
+                    _queued_pending[stripped] = _queued_pending.get(stripped, 0) + 1
             continue
 
         if rtype == "user":
@@ -350,6 +412,12 @@ def extract(records) -> tuple[list[str], set[str]]:
             for text in _text_parts(content):
                 stripped = text.strip()
                 if is_operator_text(stripped):
+                    if _queued_pending.get(stripped):
+                        # The dequeue replay of a message already recovered from the
+                        # queue. Consume the credit and drop this copy; the enqueue
+                        # position is the chronologically correct one.
+                        _queued_pending[stripped] -= 1
+                        continue
                     messages.append(stripped)
             for answer in _askq_answers(content, askq_ids):
                 stripped = answer.strip()
@@ -424,8 +492,15 @@ def _iter_records(path: Path):
 
 
 def _slug_for_cwd(cwd: Path) -> str:
-    """Derive the Claude Code project-dir slug from a working directory."""
-    return str(cwd.resolve()).replace("/", "-")
+    """Derive the Claude Code project-dir slug from a working directory.
+
+    Claude Code maps EVERY non-alphanumeric character to `-` (#555 Phase 3,
+    measured against ~/.claude/projects: `project-a` →
+    `auto-pb-swing-trader`, `/.claude` → `--claude`, `solo+issue` →
+    `solo-issue`). The earlier `/`-only replacement derived slugs that do not
+    exist for underscore/dot/plus paths.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "-", str(cwd.resolve()))
 
 
 # A worktree project-dir slug embeds the solo branch (solo/issue-N or the
@@ -433,14 +508,81 @@ def _slug_for_cwd(cwd: Path) -> str:
 # slug's `/`→`-` transform runs. A slug carrying this marker is unambiguous (it is
 # ONE issue's worktree); a slug WITHOUT it is a bare-parent (canonical-clone) dir
 # that can accumulate many issues' sessions (dotfiles#528 AC 5.3). KEEP IN SYNC with
-# sst3_utils.SOLO_BRANCH_RE.
+# sst3_utils.SOLO_BRANCH_RE. The bare `wt-<N>` worktree naming (#555 Phase 3;
+# the auto_pb convention) is a second accepted marker — boundary-anchored so a
+# word merely ending in `wt` never false-hits.
 _SOLO_ISSUE_SLUG_RE = re.compile(r"solo[-+]issue-(\d+)")
+_WT_SLUG_RE = re.compile(r"(?:^|-)wt-(\d+)(?:-|$)")
 
 
 def _issue_of_slug(name: str) -> int | None:
     """Issue number embedded in a worktree project-dir slug, else None."""
-    m = _SOLO_ISSUE_SLUG_RE.search(name)
+    m = _SOLO_ISSUE_SLUG_RE.search(name) or _WT_SLUG_RE.search(name)
     return int(m.group(1)) if m else None
+
+
+# Sidecar dirs inside a directory-format session (`<uuid>/subagents/…` etc.)
+# hold SUBAGENT transcripts and tool payloads — never the operator's main
+# transcript. Sweeping them into the agreements log would pollute the Chat
+# Reconciliation panel, so the nested fallback excludes them (#555 Phase 3).
+_SESSION_SIDECAR_DIRS = frozenset({"subagents", "tool-results", "workflows"})
+
+
+def _nested_session_files(proj: Path) -> list[Path]:
+    """Main-transcript candidates one level down (directory-format fallback)."""
+    out = []
+    for p in proj.glob("*/*.jsonl"):
+        if p.parent.name in _SESSION_SIDECAR_DIRS:
+            continue
+        if p.name.startswith("agent-"):
+            continue
+        out.append(p)
+    return sorted(out, key=lambda p: p.stat().st_mtime)
+
+
+def _dir_has_sessions(proj: Path) -> bool:
+    """Does this project dir hold ANY main transcript (flat or one level down)?
+
+    dotfiles#565 Stage 5. A worktree project dir OUTLIVES its worktree: Gate 2
+    removes the worktree, Claude Code leaves the directory behind, and it sits
+    there holding zero `.jsonl`. `--issue N` matched it by NAME and committed to
+    it, so the documented Stage-5 invocation died with "no .jsonl session files"
+    for every Issue that reached Stage 5 — which is every Issue, because the
+    worktree is always gone by then. Existence is not the question; content is.
+    """
+    if any(proj.glob("*.jsonl")):
+        return True
+    return bool(_nested_session_files(proj))
+
+
+def _sessions_mentioning_issue(paths: list[Path], issue: int,
+                               cap: int = 200) -> list[Path]:
+    """Subset of `paths` whose transcript text references `issue`.
+
+    The disambiguator for a bare-parent project dir. `/start` cd's within one
+    session, so every repo's sessions land under the same parent slug — thousands
+    of them — and picking latest-by-mtime can hand back another Issue's
+    transcript. Content is the only honest selector. Newest `cap` files are
+    scanned so this stays bounded on a slug with years of history.
+    """
+    # Digit-bounded, with an issue-shaped PREFIX required. A bare substring makes
+    # `#565` match `#5650`, and a naked number in prose could select an unrelated
+    # transcript — the too-loose-pattern failure this Issue's own AC 2.2
+    # discriminability rule exists to prevent.
+    pat = re.compile(rf"(?:issues/|issue[-_ ]?#?|#)0*{issue}(?![0-9])",
+                     re.IGNORECASE)
+    newest = sorted(paths, key=lambda q: q.stat().st_mtime, reverse=True)[:cap]
+    hits = []
+    for q in newest:
+        try:
+            with q.open("r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if pat.search(line):
+                        hits.append(q)
+                        break
+        except OSError:
+            continue
+    return sorted(hits, key=lambda q: q.stat().st_mtime)
 
 
 def resolve_sessions(args) -> list[Path]:
@@ -465,9 +607,12 @@ def resolve_sessions(args) -> list[Path]:
         # (slug carries solo[-+]issue-N), so a bare-parent CWD slug cannot silently pick
         # another issue's session by mtime.
         base = Path(args.projects_root).expanduser()
+        # A dir that matches by NAME but holds no transcript is a leftover shell
+        # from a removed worktree — selecting it is what made --issue unusable at
+        # Stage 5 (dotfiles#565). Require content, then fall through as if absent.
         candidates = sorted(
             d for d in base.glob("*")
-            if d.is_dir() and _issue_of_slug(d.name) == issue
+            if d.is_dir() and _issue_of_slug(d.name) == issue and _dir_has_sessions(d)
         )
         if len(candidates) == 1:
             proj = candidates[0]
@@ -479,8 +624,30 @@ def resolve_sessions(args) -> list[Path]:
         else:
             # No worktree dir for issue N — fall back to the CWD slug, but VERIFY it is
             # not a different issue's worktree (fail-loud, never silently wrong).
-            slug = _slug_for_cwd(Path(args.cwd) if args.cwd else Path.cwd())
+            cwd = Path(args.cwd) if args.cwd else Path.cwd()
+            slug = _slug_for_cwd(cwd)
             proj = base / slug
+            # `/start` cd's within one session, so a repo's transcripts are often
+            # recorded under the PARENT directory's slug, not the repo's own.
+            # Walk up until a slug holds a transcript (dotfiles#565 Stage 5).
+            if not (proj.is_dir() and _dir_has_sessions(proj)):
+                for parent in cwd.resolve().parents:
+                    if parent == parent.parent:
+                        break
+                    cand = base / _slug_for_cwd(parent)
+                    if cand.is_dir() and _dir_has_sessions(cand):
+                        proj, slug = cand, cand.name
+                        break
+            if not proj.is_dir():
+                # #555 Phase 3: fail loud WITH the exact workaround, not a bare
+                # "not found" — the operator can act on this without source-diving.
+                raise FileNotFoundError(
+                    f"--issue {issue}: no project dir matches solo[-+]issue-{issue} "
+                    f"or wt-{issue} under {base}, and the CWD slug '{slug}' does not "
+                    f"exist either; workaround: pass "
+                    f"--session {base}/<project-dir>/<session-uuid>.jsonl "
+                    f"(locate it: ls {base} | grep -- {issue})"
+                )
             proj_issue = _issue_of_slug(proj.name)
             if proj_issue is not None and proj_issue != issue:
                 raise ValueError(
@@ -497,7 +664,34 @@ def resolve_sessions(args) -> list[Path]:
 
     sessions = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
     if not sessions:
-        raise FileNotFoundError(f"no .jsonl session files in {proj}")
+        # #555 Phase 3: directory-format fallback — a main transcript nested one
+        # level down (session subdir) instead of a maxdepth-1 file. Sidecar
+        # transcripts (subagents/ tool-results/ workflows/, agent-*.jsonl) are
+        # excluded; they are never the operator's transcript.
+        nested = _nested_session_files(proj)
+        if not nested:
+            raise FileNotFoundError(
+                f"no .jsonl session files in {proj} (flat or one level down); "
+                f"workaround: pass --session <path-to-transcript>.jsonl explicitly"
+            )
+        if args.all_sessions:
+            return nested
+        groups: dict[Path, list[Path]] = {}
+        for p in nested:
+            groups.setdefault(p.parent, []).append(p)
+        # The AC 5.3 ambiguity contract is layout-independent: count SESSIONS
+        # (distinct session dirs), not files.
+        if _issue_of_slug(proj.name) is None and len(groups) > 1:
+            raise ValueError(
+                f"ambiguous: project dir '{proj.name}' is a non-worktree (bare-parent) "
+                f"slug with {len(groups)} nested sessions; pass --issue N, --session FILE, "
+                f"or --all-sessions (refusing to silently pick latest-by-mtime — "
+                f"dotfiles#528 AC 5.3)."
+            )
+        # Unambiguous: the latest session dir — ALL its chunks oldest-first
+        # (one newest chunk alone would be a partial transcript).
+        latest_dir = max(groups, key=lambda d: groups[d][-1].stat().st_mtime)
+        return groups[latest_dir]
     if args.all_sessions:
         return sessions
     # dotfiles#528 AC 5.3: fail-loud on an ambiguous bare-parent slug. A non-worktree
@@ -505,12 +699,67 @@ def resolve_sessions(args) -> list[Path]:
     # silently `return [sessions[-1]]` — latest-by-mtime — which can be a DIFFERENT issue's
     # session and corrupt the agreements log. Refuse; require an explicit disambiguator.
     if _issue_of_slug(proj.name) is None and len(sessions) > 1:
+        # AC 5.3 refuses latest-by-mtime on a bare-parent slug. When --issue N was
+        # supplied, telling the caller to "pass --issue N" is a dead end (#565
+        # Stage 5) — disambiguate by CONTENT instead, which is a real selector.
+        if issue is not None:
+            matched = _sessions_mentioning_issue(sessions, issue)
+            if not matched:
+                raise ValueError(
+                    f"--issue {issue}: project dir '{proj.name}' holds "
+                    f"{len(sessions)} sessions and none of the newest 200 "
+                    f"reference issue {issue}; pass --session FILE."
+                )
+            return matched if args.all_sessions else [matched[-1]]
         raise ValueError(
             f"ambiguous: project dir '{proj.name}' is a non-worktree (bare-parent) slug "
             f"with {len(sessions)} sessions; pass --issue N, --session FILE, or "
             f"--all-sessions (refusing to silently pick latest-by-mtime — dotfiles#528 AC 5.3)."
         )
     return [sessions[-1]]  # unambiguous: a worktree slug, or a single session
+
+
+# c4:T47 (dotfiles#577) — a session chosen by DISCOVERY must belong to the target
+# repo. The bare-parent project dir holds every repo's sessions (`/start` cd's
+# inside one session), and the --issue content selector matches an issue NUMBER,
+# which two repos can share: a consumer-private-M session naming "#21" was handed
+# back for consumer-private-H #21. One session-level cwd cannot decide ownership —
+# the launch dir is the shared parent — so the check reads every record's `cwd`
+# (Claude Code updates it as the session cd's) and accepts the session when ANY
+# of them is the repo root or below it, or when an extracted message names the
+# repo. An explicit --session is the operator's own choice and is not checked.
+def _repo_root(start: Path) -> Path | None:
+    """The main repository root holding `start`; a linked worktree resolves to
+    the repository it belongs to (its `.git` file points into
+    `<main>/.git/worktrees/<name>`). None when `start` is in no repository.
+
+    One implementation (AP #10): `sst3_mirror_utils._main_clone_root`. An
+    unreadable pointer resolves to the worktree itself, a narrower match that can
+    only reject a session, never accept another repo's (--session remains the
+    override). Resolved so it compares like the resolved `--repo` path."""
+    root = _main_clone_root(start)
+    return None if root is None else root.resolve()
+
+
+def _record_cwds(records) -> set[str]:
+    """Every distinct `cwd` string the transcript's records carry."""
+    return {r["cwd"] for r in records
+            if isinstance(r, dict) and isinstance(r.get("cwd"), str) and r["cwd"]}
+
+
+def _cwd_in_repo(cwd: str, root: Path) -> bool:
+    """Is `cwd` the repo root or below it? Compared by PATH COMPONENT: a string
+    prefix would count `<root>-archive` as inside `<root>`."""
+    p = Path(cwd)
+    return p == root or root in p.parents
+
+
+def _messages_name_repo(messages: list[str], name: str) -> bool:
+    """Does any message name the repo as a whole token (`dotfiles` must not
+    match inside `dotfiles-mt5-paper-nodes`)?"""
+    pat = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])",
+                     re.IGNORECASE)
+    return any(pat.search(m) for m in messages)
 
 
 def render_markdown(messages: list[str], sources: list[Path]) -> str:
@@ -564,6 +813,13 @@ def main() -> int:
              "project dir that accumulates many issues' sessions (dotfiles#528 AC 5.3).",
     )
     parser.add_argument(
+        "--repo", metavar="DIR",
+        help="Target repository root for the session-ownership check (default: "
+             "the repository holding --cwd; a linked worktree resolves to its "
+             "main repository). A session chosen by discovery must have a record "
+             "cwd at or below this root, or a message naming it (dotfiles#577 T47).",
+    )
+    parser.add_argument(
         "--json", action="store_true",
         help="Emit a JSON object instead of the `## Agreements Log` markdown.",
     )
@@ -603,16 +859,46 @@ def main() -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
+    # c4:T47 — ownership check for sessions chosen by discovery (see _repo_root).
+    repo_root: Path | None = None
+    if not args.session:
+        if args.repo:
+            repo_root = Path(args.repo).expanduser().resolve()
+        else:
+            here = (Path(args.cwd) if args.cwd else Path.cwd()).expanduser().resolve()
+            repo_root = _repo_root(here)
+            if repo_root is None:
+                print(f"NOTE: session-ownership check skipped — {here} is in no "
+                      f"repository; pass --repo DIR to check it.", file=sys.stderr)
+
     messages: list[str] = []
     unknown: set[str] = set()
+    foreign: list[tuple[Path, set[str]]] = []
     for sess in sessions:
         try:
             sess_messages, sess_unknown = extract(_iter_records(sess))
+            cwds = _record_cwds(_iter_records(sess)) if repo_root is not None else set()
         except OSError as exc:
             print(f"ERROR: cannot read {sess}: {exc}", file=sys.stderr)
             return 1
+        if repo_root is not None and not (
+                any(_cwd_in_repo(c, repo_root) for c in cwds)
+                or _messages_name_repo(sess_messages, repo_root.name)):
+            foreign.append((sess, cwds))
         messages.extend(sess_messages)
         unknown |= sess_unknown
+
+    if foreign:
+        # Refuse BEFORE emitting: an agreements log from another repo's session
+        # would have the Chat Reconciliation panel audit the wrong conversation.
+        for sess, cwds in foreign:
+            seen = ", ".join(sorted(cwds)[:10]) or "(no record carries a cwd)"
+            print(f"ERROR: session {sess} does not belong to {repo_root}: no record "
+                  f"cwd is at or below it and no message names "
+                  f"'{repo_root.name}'. cwds seen: {seen}. Pass --session FILE "
+                  f"(or --repo DIR if the target repo was mis-derived).",
+                  file=sys.stderr)
+        return 4
 
     if args.json:
         print(json.dumps({

@@ -77,8 +77,11 @@
 #   --restart            main agent signals a round boundary at fix time
 #   --escalate           main agent signals the class-sweep escalation:
 #                        restarts reset to zero, boundary logged
-#   --get                print the current restart count (0 if no state)
-#   --stage5             main agent signals Stage-5 entry (c4:T06, dotfiles#577):
+#   --get                print the current restart count (0 if no state); stderr
+#                        names the issue and worktree it was read for, because
+#                        the key comes from the cwd: run from another Issue's
+#                        worktree, a bare count reads as this Issue's
+#   --stage5            main agent signals Stage-5 entry (c4:T06, dotfiles#577):
 #                        Stage 4's restarts + escalation are ARCHIVED into
 #                        stage4_* fields and the loop state resets, so a scoped
 #                        Stage-5 Ralph restart does not inherit Stage 4's terminal
@@ -590,6 +593,9 @@ open_new_round() {
 
 case "$MODE" in
   --get)
+    # stdout stays the bare count every reader parses; the key goes to stderr
+    printf 'ralph-counter --get: issue %s, worktree %s (key %s)\n' \
+      "$ISSUE_NUM" "$WORKTREE_NAME" "$KEY" >&2
     printf '%s\n' "$RESTARTS"; exit 0 ;;
 
   --restart)

@@ -35,7 +35,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Need history to compare before..after; fetch enough depth.
           fetch-depth: 0

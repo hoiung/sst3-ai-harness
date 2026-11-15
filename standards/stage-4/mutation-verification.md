@@ -8,7 +8,7 @@ THE canonical definition of "every opted-in guard is mutation-verified". The Ver
 **The rule**: a gate — any test or check whose purpose is to reject a defect class — is **UNPROVEN until it has been shown to fail**. A gate that passes unconditionally satisfies EXIST and RUN and ships green; the only defence is proof it reddens on its own defect. Evidence (`Issue #3`): 9 review rounds reading gates found 4 members of a defect class that mechanical mutation found 217 of; a client-facing figure was falsified with all 107 tests green.
 
 <!-- stages: 4 -->
-## The mutation table (required artefact for any gate-bearing diff)
+## The mutation table (required artefact for an opted-in gate-bearing diff)
 
 For an opted-in diff that ADDS or MODIFIES a gate, the tier-evidence line carries a mutation result backed by a **mutation table** — one row per gate:
 

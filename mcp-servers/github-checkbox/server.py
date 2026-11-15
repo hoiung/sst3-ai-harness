@@ -121,6 +121,31 @@ def run_gh_command(args: list[str], repo: str = None, skip_repo_flag: bool = Fal
     return False, "", f"All {retries} attempts failed. Last error: {last_error}"
 
 
+def issue_ref(issue_number: int, repo: str = None) -> str:
+    """`<owner/repo> Issue #N` for the repo actually read. Every reply carries it:
+    the default repo is not the caller's repo, and a bare `Issue #N` reply read as
+    the caller's own Issue when the tool had read another repo's."""
+    return f"{repo or DEFAULT_REPO} Issue #{issue_number}"
+
+
+NEAR_MATCH_CAP = 10
+
+
+def near_matches(checkboxes: list[dict], wanted: str) -> list[dict]:
+    """Checkboxes whose text contains `wanted`, is contained in it, or shares its
+    first 30 characters. The not-found reply lists these, not the whole Issue."""
+    w = " ".join(wanted.split()).lower()
+    if not w:
+        return []
+    head = w[:30]
+    out = []
+    for cb in checkboxes:
+        text = " ".join(cb["text"].split()).lower()
+        if w in text or (len(text) >= 8 and text in w) or text.startswith(head):
+            out.append(cb)
+    return out
+
+
 def get_issue_body(issue_number: int, repo: str = None) -> tuple[bool, str, str]:
     """
     Fetch Issue body from GitHub.
@@ -137,7 +162,7 @@ def get_issue_body(issue_number: int, repo: str = None) -> tuple[bool, str, str]
 
     if not success:
         if "no open issues" in stderr.lower() or "not found" in stderr.lower():
-            return False, "", f"Issue #{issue_number} not found"
+            return False, "", f"{issue_ref(issue_number, repo)} not found"
         return False, "", f"Failed to fetch Issue: {stderr}"
 
     return True, stdout.strip(), ""
@@ -352,18 +377,23 @@ async def update_issue_checkbox(
         # Checkbox not found, list available checkboxes
         checkboxes = parse_checkboxes(body)
         if not checkboxes:
-            return f"ERROR: No checkboxes found in Issue #{issue_number}"
+            return f"ERROR: No checkboxes found in {issue_ref(issue_number, repo)}"
 
-        available = "\n".join([
+        near = near_matches(checkboxes, checkbox_text)
+        shown = "\n".join(
             f"  {'[x]' if cb['checked'] else '[ ]'} {cb['text']}"
-            for cb in checkboxes
-        ])
-        return f"ERROR: Checkbox not found: '{checkbox_text}'\n\nAvailable checkboxes:\n{available}"
+            for cb in near[:NEAR_MATCH_CAP]
+        )
+        listing = (f"Near matches ({min(len(near), NEAR_MATCH_CAP)} of {len(near)}):\n{shown}"
+                   if near else "No near match.")
+        return (f"ERROR: Checkbox not found in {issue_ref(issue_number, repo)}: '{checkbox_text}'\n\n"
+                f"{listing}\n\n{len(checkboxes)} checkboxes in total; pass the exact text "
+                f"(get_issue_checkboxes lists them).")
 
     checkbox_line, is_checked = result
 
     if is_checked:
-        return f"ERROR: Checkbox already checked: '{checkbox_text}'"
+        return f"ERROR: Checkbox already checked in {issue_ref(issue_number, repo)}: '{checkbox_text}'"
 
     # Update checkbox from [ ] to [x]
     new_line = checkbox_line.replace('- [ ]', '- [x]', 1)
@@ -377,7 +407,7 @@ async def update_issue_checkbox(
     if not success:
         return f"ERROR: {error}"
 
-    return f"SUCCESS: Checkbox '{checkbox_text}' marked as complete in Issue #{issue_number}\nEvidence appended to Proof of Work section."
+    return f"SUCCESS: Checkbox '{checkbox_text}' marked as complete in {issue_ref(issue_number, repo)}\nEvidence appended to Proof of Work section."
 
 
 @mcp.tool()
@@ -405,10 +435,10 @@ async def get_issue_checkboxes(issue_number: int, repo: str = None) -> str:
     checkboxes = parse_checkboxes(body)
 
     if not checkboxes:
-        return f"No checkboxes found in Issue #{issue_number}"
+        return f"No checkboxes found in {issue_ref(issue_number, repo)}"
 
     # Format output
-    lines = [f"Checkboxes in Issue #{issue_number}:"]
+    lines = [f"Checkboxes in {issue_ref(issue_number, repo)}:"]
     lines.append("")
 
     checked_count = sum(1 for cb in checkboxes if cb['checked'])
@@ -450,11 +480,11 @@ async def list_issue_comments(issue_number: int, repo: str = None) -> str:
         return f"ERROR: Failed to list comments: {stderr}"
 
     if not stdout.strip() or stdout.strip() == "[]":
-        return f"No comments found on Issue #{issue_number}"
+        return f"No comments found on {issue_ref(issue_number, repo)}"
 
     try:
         comments = json.loads(stdout)
-        lines = [f"Comments on Issue #{issue_number}:", ""]
+        lines = [f"Comments on {issue_ref(issue_number, repo)}:", ""]
         for c in comments:
             preview = c['body'][:80] + "..." if len(c['body']) > 80 else c['body']
             lines.append(f"  ID: {c['id']} | @{c['author']} | {c['created_at']}")
@@ -527,11 +557,11 @@ async def get_issue_events(issue_number: int, repo: str = None) -> str:
         return f"ERROR: Failed to get events: {stderr}"
 
     if not stdout.strip() or stdout.strip() == "[]":
-        return f"No events found for Issue #{issue_number}"
+        return f"No events found for {issue_ref(issue_number, repo)}"
 
     try:
         events = json.loads(stdout)
-        lines = [f"Events for Issue #{issue_number} (latest 20):", ""]
+        lines = [f"Events for {issue_ref(issue_number, repo)} (latest 20):", ""]
         for e in events:
             actor = e.get('actor') or 'system'
             lines.append(f"  {e['event']} | @{actor} | {e['created_at']}")

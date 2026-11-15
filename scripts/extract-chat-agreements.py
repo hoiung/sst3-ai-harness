@@ -26,6 +26,7 @@ This script reads those JSONL files and recovers ONLY genuine operator-typed
 turns, dropping harness-injected noise:
   - tool_result content parts (function outputs)
   - <system-reminder> / <command-*> / <local-command-*> / <bash-*> wrappers
+  - <cross-session-message> turns (another Claude session's text, not the operator's)
   - skill-body injections (the rendered slash-command body sent as a user turn)
   - compaction summaries ("This session is being continued ...")
   - "[Request interrupted by user]" markers
@@ -56,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -79,6 +81,11 @@ _SKIP_PREFIXES = (
     # user-turn wrapper class in a multi-session corpus, so omitting it leaks
     # fake "operator messages" into the verifier panel (dotfiles#522 Stage 5).
     "<task-notification>",
+    # A message another Claude session sent to this one: it arrives as a user turn, and it
+    # is that agent's text, not the operator's, even where it quotes him. Listed as his, a
+    # chat reconciliation reads an agent's summary as an operator decision (dotfiles#582
+    # Stage 5: 2 of the 23 "operator messages" extracted for that Issue were these).
+    "<cross-session-message",
     "Caveat: The messages below",
     # Compaction summary injected as a user turn — harness-generated, not typed.
     "This session is being continued from a previous conversation",
@@ -151,6 +158,18 @@ _PARSED_TYPES = frozenset({"user", "queue-operation"})
 #               anyway (22, _SKIP_PREFIXES), "Tool loaded." notices (6), and 2 mid-turn
 #               wrappers whose operator line is in queue-operation and user, escaped
 #               differently. Parsing the class would only re-emit messages already read.
+#
+# Re-derived 2026-10-27 (a Stage-3 extraction, consumer-private-T) over 136 transcripts: the tool
+# exited 3 on one more class this build writes into 23 of them, inspected the same way:
+#   tools-used     40 records, keys exactly {sessionId, tools, type}. `tools` is a list of tool
+#               names (StructuredOutput, Read, Grep, Bash, Skill, Write, Workflow, Agent,
+#               AskUserQuestion), written after a compaction. No free-text field.
+#
+# Re-derived 2026-11-14 (dotfiles#581: the tool exited 3 on every current transcript):
+#   session-owner  120 records in one session, keys exactly {accountUuid, organizationUuid,
+#               sessionId, type}. Identifiers only, no free-text field.
+#   continued-in   keys exactly {continuedInSessionId, sessionId, timestamp, type}: the id of
+#               the session a compacted one carries on in. No free-text field.
 _KNOWN_IGNORED = frozenset({
     "agent-name",
     "ai-title",
@@ -161,6 +180,7 @@ _KNOWN_IGNORED = frozenset({
     "atis-latch",
     "attachment",
     "bridge-session",
+    "continued-in",
     "cost-state",
     "custom-title",
     "file-history-delta",
@@ -171,7 +191,9 @@ _KNOWN_IGNORED = frozenset({
     "permission-mode",
     "pr-link",
     "relocated",
+    "session-owner",
     "system",
+    "tools-used",
     "worktree-state",
 })
 
@@ -585,6 +607,28 @@ def _sessions_mentioning_issue(paths: list[Path], issue: int,
     return sorted(hits, key=lambda q: q.stat().st_mtime)
 
 
+def _session_by_id(base: Path, session_id: str) -> list[Path]:
+    """The transcript of session `session_id` under `base`: its flat file, or every
+    chunk of its directory-format session oldest-first. Empty when there is none."""
+    if not re.fullmatch(r"[A-Za-z0-9-]+", session_id):
+        return []
+    flat = sorted(base.glob(f"*/{session_id}.jsonl"), key=lambda p: p.stat().st_mtime)
+    if flat:
+        return [flat[-1]]
+    nested = [p for p in base.glob(f"*/{session_id}/*.jsonl")
+              if not p.name.startswith("agent-")]
+    return sorted(nested, key=lambda p: p.stat().st_mtime)
+
+
+def _slug_in_repo(name: str, root_slug: str) -> bool:
+    """Is project-dir slug `name` the repo's own, or one of its worktrees'?
+    `<root>/.claude/worktrees/<x>` and the sibling `<root>-wt-<N>` are the two
+    worktree layouts in use. A bare prefix test would count `app-admin` as `app`."""
+    return (name == root_slug
+            or name.startswith(root_slug + "--claude-worktrees-")
+            or re.match(re.escape(root_slug) + r"-wt-\d+(?:-|$)", name) is not None)
+
+
 def resolve_sessions(args) -> list[Path]:
     """Resolve the ordered list of session JSONL files to read.
 
@@ -600,6 +644,19 @@ def resolve_sessions(args) -> list[Path]:
 
     issue = getattr(args, "issue", None)
 
+    # The session that is running this tool is named by CLAUDE_CODE_SESSION_ID. It is
+    # used before any discovery: newest-by-mtime hands back whichever session wrote
+    # last, which with two sessions open is the other one. With --issue N it is used
+    # only when it is that Issue's session (its project dir, or its text, names N).
+    own = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()  # sst3-sec: justified: _session_by_id accepts only [A-Za-z0-9-]+ before the value reaches a glob
+    if own and not args.project_dir and not args.all_sessions:
+        mine = _session_by_id(Path(args.projects_root).expanduser(), own)
+        if mine and (issue is None
+                     or _issue_of_slug(mine[0].parent.name) == issue
+                     or _issue_of_slug(mine[0].parent.parent.name) == issue
+                     or _sessions_mentioning_issue(mine, issue)):
+            return mine
+
     if args.project_dir:
         proj = Path(args.project_dir)
     elif issue is not None:
@@ -614,6 +671,13 @@ def resolve_sessions(args) -> list[Path]:
             d for d in base.glob("*")
             if d.is_dir() and _issue_of_slug(d.name) == issue and _dir_has_sessions(d)
         )
+        # Two repos can share an issue number: keep only the target repo's worktree
+        # dirs, so another repo's `solo-issue-N` dir is never a candidate.
+        target = (Path(args.repo).expanduser().resolve() if getattr(args, "repo", None)
+                  else _repo_root((Path(args.cwd) if args.cwd else Path.cwd()).expanduser().resolve()))
+        if target is not None:
+            root_slug = _slug_for_cwd(target)
+            candidates = [d for d in candidates if _slug_in_repo(d.name, root_slug)]
         if len(candidates) == 1:
             proj = candidates[0]
         elif len(candidates) > 1:

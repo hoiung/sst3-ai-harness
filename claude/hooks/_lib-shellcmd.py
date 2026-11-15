@@ -966,8 +966,12 @@ _PROGRAM_OPTIONS = frozenset({"--pre", "--hostname-bin", "--filter", "--pager", 
 
 def _carrier(name: str, gv, args, env) -> bool:
     """Can this command run one of its own arguments where the reader does not look?"""
-    if name == "rm":                      # its operands are paths; rm_destructive judges them
-        return False
+    if name == "rm":
+        # Its operands are paths and rm_destructive judges them, but only the ones it can
+        # read. An operand that still holds an expansion (a command substitution, a variable)
+        # is a path this reader does not know, so the plain patterns decide as well:
+        # `rm -rf "$(echo /home/x)"` reads here as the literal text, not as /home/x.
+        return any("$" in a or "`" in a for a in args)
     if _PROGRAM_ENV & env.keys():
         return True
     if name == "git":

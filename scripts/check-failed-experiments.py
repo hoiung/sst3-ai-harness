@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+[#406 Phase 9 — MANUAL UTILITY] Not wired into .pre-commit-config.yaml or CI by design. Invoke directly when needed (manual workflow tool, not a per-commit hook).
+
 Check Failed Experiments - Infinite Loop Prevention
 
 Prevents "Fix-Revert-Fix" infinite loops by checking if proposed fixes
@@ -29,7 +31,7 @@ Exit Codes:
 Architecture:
     - temp/{issue#}-failed-experiments.log: Per-issue failures
     - .sst3-local/failed-experiments.log: Project-level patterns
-    - SST3/reference/failed-experiments.md: Template/process guide
+    - reference/failed-experiments.md: Template/process guide
 """
 
 import argparse
@@ -41,7 +43,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from sst3_utils import get_repo_root, fix_windows_console
+from sst3_utils import get_repo_root, fix_windows_console, SST3UtilError
 fix_windows_console()
 
 
@@ -58,7 +60,11 @@ class FailedExperimentChecker:
         """
         self.issue_number = issue_number
         self.verbose = verbose
-        self.repo_root = get_repo_root()
+        try:
+            self.repo_root = get_repo_root()
+        except SST3UtilError as exc:
+            print(f"[ERROR] check-failed-experiments: {exc}", file=sys.stderr)
+            sys.exit(1)
 
         # Log paths
         self.project_log = self.repo_root / ".sst3-local" / "failed-experiments.log"

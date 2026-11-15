@@ -3,5 +3,85 @@
     "type": "command",
     "command": "node claude/statusline.js",
     "padding": 1
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-session-context-injector.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-session-context-injector.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-session-context-injector.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-branch-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-destructive-op-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-canonical-sync-guard.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-subagent-result-parser.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-subagent-result-parser.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "ralph-review",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-ralph-restart-counter.sh"
+          }
+        ]
+      }
+    ]
   }
 }

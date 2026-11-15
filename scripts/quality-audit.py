@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Comprehensive quality audit of entire SST3 system.
+[#406 Phase 9 — MANUAL UTILITY] Not wired into .pre-commit-config.yaml or CI by design. Invoke directly when needed (manual workflow tool, not a per-commit hook).
+
 
 Per dotfiles#405 Phase 7: replaced 25+ subprocess.run() spawns with in-process
 function calls. quality-check.py now imported as a module via importlib (its

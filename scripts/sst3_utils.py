@@ -177,12 +177,11 @@ def get_staged_files() -> list[str]:
     CLI callers should catch and translate to sys.exit themselves.
     """
     try:
-        result = subprocess.run(
-            ['git', 'diff', '--cached', '--name-only'],
-            capture_output=True, text=True, check=True
+        result = subprocess.run(  # sst3-sec: justified: argv list, no shell; fixed git verb, no caller input
+            ['git', 'diff', '--cached', '--name-only', '-z'],
+            capture_output=True, text=True, errors="surrogateescape", check=True
         )
-        files = result.stdout.strip().split('\n')
-        return [f for f in files if f]
+        return [f for f in result.stdout.split('\0') if f]
     except subprocess.CalledProcessError as exc:
         raise SST3UtilError(f"git diff --cached failed: {exc}") from exc
 

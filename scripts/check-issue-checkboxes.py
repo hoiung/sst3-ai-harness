@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+[#406 Phase 9 — MANUAL UTILITY] Not wired into .pre-commit-config.yaml or CI by design. Invoke directly when needed (manual workflow tool, not a per-commit hook).
+
 Validate GitHub Issue checkboxes for SST3 stage completion.
 
 This script ensures stage gates work correctly by:
@@ -153,7 +155,7 @@ def parse_checkboxes(issue_data: dict, source: str = 'all', mode: str = 'stage')
                 source=f'comment-{idx}',
                 timestamp=comment.get('createdAt'),
                 checkboxes=checkboxes,
-            mode=mode
+                mode=mode
             )
 
     return checkboxes

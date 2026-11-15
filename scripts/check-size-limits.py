@@ -18,12 +18,21 @@ _FILE_CONTENT_CACHE: Dict[Path, str] = {}
 
 
 def _read_md(path: Path) -> str:
-    """Read markdown file once, return cached content thereafter."""
+    """Read markdown file once, return cached content thereafter.
+
+    AP #7/#12 (dotfiles#406 F1.6): OSError on critical files now logged
+    to stderr instead of silently swallowed.
+    """
     if path in _FILE_CONTENT_CACHE:
         return _FILE_CONTENT_CACHE[path]
     try:
         content = path.read_text(encoding='utf-8', errors='ignore')
-    except Exception:
+    except OSError as exc:
+        print(
+            f"[WARN] check-size-limits: cannot read {path}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         content = ""
     _FILE_CONTENT_CACHE[path] = content
     return content
@@ -54,14 +63,22 @@ def get_status_emoji(percentage: float) -> str:
         return '[OK]'
 
 def check_file_size(filepath: Path, limit: int, is_line_limit: bool = False) -> Optional[Dict]:
-    """Check if a file exceeds its size limit."""
+    """Check if a file exceeds its size limit.
+
+    AP #7/#12 (dotfiles#406 F1.6): OSError logged not swallowed.
+    """
     if not filepath.exists():
         return None
 
     try:
         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
-    except Exception:
+    except OSError as exc:
+        print(
+            f"[WARN] check-size-limits: cannot read {filepath}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         return None
 
     if is_line_limit:
@@ -85,13 +102,25 @@ def check_file_size(filepath: Path, limit: int, is_line_limit: bool = False) -> 
     }
 
 def check_component_sizes(base_path: Path) -> List[Dict]:
-    """Check component-level size limits."""
+    """Check component-level size limits.
+
+    #555 AC 2.1: the component list is DERIVED from LIMITS — every registered
+    directory-shaped key (contains '/', not a SST3_TOTAL_* scalar) is measured.
+    The previous hardcoded ['workflow','standards','templates','reference']
+    literal meant a registered key outside SST3/ was never walked: registration
+    alone measured nothing. Mirror caveat: in the public mirror the commands
+    dir is `claude/commands` (no leading dot) — the dotted key falls back to
+    the undotted layout so the mirrored copy measures instead of silently
+    skipping.
+    """
     results = []
 
-    # Check each component directory
-    components = ['workflow', 'standards', 'templates', 'reference']
+    components = [k for k in LIMITS
+                  if '/' in k and not k.startswith('SST3_TOTAL')]
     for component in components:
-        component_path = base_path / 'SST3' / component
+        component_path = base_path / component
+        if not component_path.exists() and component.startswith('.'):
+            component_path = base_path / component.lstrip('.')
         if component_path.exists():
             total_tokens = 0
             for md_file in component_path.glob('*.md'):
@@ -102,12 +131,12 @@ def check_component_sizes(base_path: Path) -> List[Dict]:
                 if content:
                     total_tokens += count_tokens(content)
 
-            limit = LIMITS.get(f'SST3/{component}', 10000)
+            limit = LIMITS[component]
             percentage = (total_tokens / limit) * 100
             status = get_status_emoji(percentage)
 
             results.append({
-                'component': f'SST3/{component}',
+                'component': component,  # LIMITS key IS the display name (AC 2.1)
                 'size': total_tokens,
                 'limit': limit,
                 'percentage': percentage,
@@ -176,6 +205,16 @@ def generate_pruning_guidance(violations: List[Dict]) -> str:
 
 def main():
     """Main pre-commit hook function."""
+    import argparse
+    parser = argparse.ArgumentParser(description="SST3 size-limit checker")
+    parser.add_argument(
+        "--enforce", action="store_true",
+        help="#555 AC 2.2 (operator decision 2026-07-26): exit 1 on any ERROR-level "
+             "breach. Default stays advisory (exit 0, Issue #132 Quality First). "
+             "Callers wire this ONLY in lanes that cannot brick the tree "
+             "(env-gated pre-commit via SST3_ENFORCE_SIZE=1, or CI/manual) — "
+             "never the unconditional pre-commit path while the tree is over cap.")
+    args = parser.parse_args()
     base_path = Path.cwd()
     violations = []
     warnings = []
@@ -233,6 +272,9 @@ def main():
         print(generate_pruning_guidance(violations))
         print("\n[ADVISORY] Review token usage - quality decisions, not limits")
         print("   Run: python scripts/suggest-pruning.py")
+        if args.enforce:
+            print("\n[ENFORCE] --enforce set: exiting 1 on breach (#555 AC 2.2)")
+            return 1
         return 0  # Advisory only per Quality First philosophy (Issue #132)
     elif warnings:
         print("\n[WARNING] Approaching size limits!")

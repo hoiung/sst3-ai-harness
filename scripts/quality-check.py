@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Automated quality validation for SST3 content"""
+"""Automated quality validation for SST3 content.
+
+[#406 Phase 9 — MANUAL UTILITY] Not wired into .pre-commit-config.yaml or CI
+by design. Invoke directly when needed (manual workflow tool, not a per-commit
+hook).
+"""
+
 
 import sys
-import os
 import re
+from pathlib import Path
 
 def check_readability(content):
     """Check if content is clear and understandable"""
@@ -16,13 +22,6 @@ def check_readability(content):
         if avg_length > 30:
             issues.append("Average sentence length too long (>30 words)")
 
-    # Check for jargon without explanation
-    jargon = ['orchestrator', 'subagent', 'guardrail', 'pruning']
-    for term in jargon:
-        if term in content.lower() and 'see:' not in content.lower():
-            # Jargon used but no cross-reference
-            pass  # Allow jargon in SST3 internal docs
-
     return len(issues) == 0, issues
 
 def check_completeness(content, expected_sections=None):
@@ -33,12 +32,6 @@ def check_completeness(content, expected_sections=None):
         for section in expected_sections:
             if section not in content:
                 issues.append(f"Missing expected section: {section}")
-
-    # Check for orphaned references
-    references = re.findall(r'See:\s*([^\n]+)', content)
-    for ref in references:
-        # Just flag for manual review
-        pass
 
     return len(issues) == 0, issues
 
@@ -51,11 +44,6 @@ def check_correctness(content):
     for text, url in links:
         if url.startswith('http') and 'example.com' in url:
             issues.append(f"Placeholder URL found: {url}")
-
-    # Check for contradictions (basic)
-    if 'MUST' in content and 'MUST NOT' in content:
-        # Flag for manual review
-        pass
 
     return len(issues) == 0, issues
 
@@ -114,13 +102,13 @@ def main():
         print("\nRuns 5-dimension quality validation")
         sys.exit(1)
 
-    file_path = sys.argv[1]
+    file_path = Path(sys.argv[1])
 
-    if not os.path.exists(file_path):
+    if not file_path.exists():
         print(f"Error: File not found: {file_path}")
         sys.exit(1)
 
-    print(f"\n# Quality Validation: {os.path.basename(file_path)}\n")
+    print(f"\n# Quality Validation: {file_path.name}\n")
 
     results = validate_quality(file_path)
     passed = 0

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+[#406 Phase 9 — MANUAL UTILITY] Not wired into .pre-commit-config.yaml or CI by design. Invoke directly when needed (manual workflow tool, not a per-commit hook).
+
 Automated Rollback Tool for Failed Self-Healing Changes
 
 Executes automatic rollback when Stage 5 validation fails or 3-issue
@@ -30,6 +32,7 @@ Safety:
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -37,7 +40,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from sst3_utils import get_repo_root, fix_windows_console, fetch_issue_data
+from sst3_utils import get_repo_root, fix_windows_console, fetch_issue_data, SST3UtilError
 
 
 class AutoRollback:
@@ -49,7 +52,11 @@ class AutoRollback:
         self.dry_run = dry_run
         self.preserve_dir = Path(preserve_dir) if preserve_dir else None
         self.since_commit = since_commit
-        self.repo_root = get_repo_root()
+        try:
+            self.repo_root = get_repo_root()
+        except SST3UtilError as exc:
+            print(f"[ERROR] auto-rollback: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     def get_issue_data(self) -> Optional[Dict]:
         """Fetch Issue data using shared sst3_utils.fetch_issue_data helper.
@@ -116,22 +123,29 @@ class AutoRollback:
         except subprocess.CalledProcessError:
             return []
 
-    def get_changed_files(self, commits: List[str]) -> List[str]:
-        """Get list of files changed in commits"""
+    def get_changed_files(self, commits: List[str]) -> Optional[List[str]]:
+        """Files changed in commits; None when a commit could not be read.
+
+        #577 escalation: `-z` because without it git C-quotes a name holding a
+        non-ASCII byte, a quote or a control character, and the quoted form names
+        no file on disk (class C1). A commit git cannot show used to be skipped
+        with `continue`, so its files were neither listed nor preserved before the
+        revert (class C3); the rollback now stops instead.
+        """
         all_files = set()
 
         for commit in commits:
             try:
-                result = subprocess.run(
-                    ['git', 'show', '--name-only', '--pretty=', commit],
+                result = subprocess.run(  # sst3-sec: justified: git argv list, a commit id read from git log, no shell
+                    ['git', 'show', '--name-only', '-z', '--pretty=', commit],
                     capture_output=True,
-                    text=True,
                     check=True
                 )
-                files = [f for f in result.stdout.strip().split('\n') if f]
-                all_files.update(files)
-            except subprocess.CalledProcessError:
-                continue
+            except subprocess.CalledProcessError as exc:
+                print(f"[ERROR] auto-rollback: could not list the files of {commit}: "
+                      f"{exc.stderr.decode(errors='replace').strip()}", file=sys.stderr)
+                return None
+            all_files.update(os.fsdecode(f) for f in result.stdout.split(b'\0') if f)
 
         return sorted(all_files)
 
@@ -219,7 +233,7 @@ class AutoRollback:
 {chr(10).join(f'- {commit}' for commit in commits)}
 
 ### Failed Experiment Documentation
-This rollback has been documented in `SST3/reference/failed-experiments.md`.
+This rollback has been documented in `reference/failed-experiments.md`.
 
 ### Recovery Actions
 1. Analyze why validation failed
@@ -322,6 +336,9 @@ The changes have been preserved and can be recovered if needed.
         # Step 4: Get changed files
         print("\nStep 4: Identifying changed files...")
         files = self.get_changed_files(commits)
+        if files is None:
+            print("Rollback aborted: the affected files could not be listed, so they cannot be preserved")
+            return False
         print(f"Found {len(files)} files affected:")
         for f in files[:10]:
             print(f"  - {f}")

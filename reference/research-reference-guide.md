@@ -4,7 +4,7 @@
 
 **Path**: `docs/research/` (in project root, NOT in SST3/)
 
-**Why**: Predictable, scannable, project-specific external research documentation.
+**Sub-folder rule**: when a domain accumulates ≥3 research docs, organise into `docs/research/<domain>/` within the matching repo. Single docs stay at `docs/research/` root. NEVER place research under domain-adjacent paths like `business/<domain>/research/`, `src/<module>/docs/`, or `modules/<x>/research/`. Skill files and memory pointers must reflect the per-repo canonical `docs/research/` (or `research/`) location.
 
 ## File Naming Convention
 
@@ -96,23 +96,9 @@
 
 **Ownership**: Team maintains collectively (not single author)
 
-## Validation Test Results (Issue #165)
-
-**4 Test Scenarios**:
-1. Existing research found → Used PANDAS.md, no external search
-2. No research exists → Created REQUESTS.md from scratch
-3. Partial coverage → Updated PANDAS.md, no duplicate file
-4. Multiple domains → Combined PANDAS.md + PYTEST.md knowledge
-
-**Success Metrics**:
-- 4/4 scenarios passed
-- Stage 1 discovery prevented duplicate research
-- Research files reused across features
-- No reinventing the wheel
-
 ## AI-Optimization Principles
 
-**Tables over prose**: AI parses tables 3x faster than paragraphs
+**Tables over prose**: structured tables parse faster than paragraphs
 
 **YAML frontmatter**: Structured metadata for quick relevance scanning
 

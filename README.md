@@ -353,6 +353,19 @@ The `/Leader` command creates the GitHub Issue for you in Stage 3. Do NOT create
 
 Commands live at [`claude/commands/Leader.md`](claude/commands/Leader.md) and [`claude/commands/SST3-solo.md`](claude/commands/SST3-solo.md). Either user-scope them by copying to `~/.claude/commands/` or keep them repo-scoped under `.claude/commands/` in your own project.
 
+The review loop dispatches two agent types: [`claude/agents/ralph-review.md`](claude/agents/ralph-review.md), the read-only reviewer every tier runs as, and [`claude/agents/ralph-fixer.md`](claude/agents/ralph-fixer.md), the one agent that writes code, used at most once per review. Copy both to `~/.claude/agents/` for user scope, or to `.claude/agents/` inside your project. Claude Code reads agent types when a session starts, so start a new session after copying them.
+
+The runtime hooks live in [`claude/hooks/`](claude/hooks/) and [`claude/settings.json`](claude/settings.json) wires six of them. To switch them on, copy every file in `claude/hooks/` (the `_lib-*` helpers too) to `~/.claude/hooks/`, keep them executable, and merge the `hooks` block of `claude/settings.json` into your own `~/.claude/settings.json`. The wiring points at `$HOME/.claude/hooks/`, so the hooks do nothing until they are copied there. They need `jq`, `git` and `python3` on the `PATH`. What each wired hook does:
+
+- `sst3-destructive-op-guard.sh` (before a Bash command): blocks a forced push, a hard reset, a history rewrite and a recursive delete of a home or root path.
+- `sst3-branch-guard.sh` (before a Bash command): warns when a command switches branch or creates a branch that is not `solo/*`. Set `SST3_BRANCH_GUARD_MODE=DENY` to block instead.
+- `sst3-canonical-sync-guard.sh` (before a Bash command): warns when a build or restart runs in a clone that is behind its `origin`.
+- `sst3-session-context-injector.sh` (session start, resume and after a compact): puts the mandatory-reading checklist back in context.
+- `sst3-subagent-result-parser.sh` (when a subagent stops, and after an Agent call): sends a reviewer back once if its answer has no `## RESULT` block, and hands the fix-cycle count to the main agent.
+- `sst3-ralph-restart-counter.sh` (when a `ralph-review` subagent stops): keeps the fix-cycle count the review loop's limit is read from.
+
+Two shipped hooks are left unwired on purpose: `sst3-canon-ff.sh` fast-forwards a clone after a push, which is only safe when nothing runs from that clone, and `sst3-issue-body-privacy-gate.sh` looks for its scanner (`scripts/sst3-privacy-scan-issue-body.py`) relative to this repository, so it finds nothing once copied to `~/.claude/hooks/` until you point it at your copy. Wire either yourself once you have checked it against your setup. To switch everything off, remove the `hooks` block or set `"disableAllHooks": true`.
+
 ### Slash Commands
 
 | Command | What it does |

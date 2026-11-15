@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+[#406 Phase 9 — MANUAL UTILITY] Not wired into .pre-commit-config.yaml or CI by design. Invoke directly when needed (manual workflow tool, not a per-commit hook).
+
 Validate GitHub Issue body contains all critical insights (not buried in comments).
 
 This script enforces the principle: "Insights go in BODY, not comments"
@@ -178,6 +180,32 @@ def check_insight_in_body(insight_type: str, comment_snippet: str, body_text: st
             if f'#{num}' not in body_text:
                 return False
         return True
+
+    # The caller passes the FORMATTED insight text, not the raw snippet — every fuzzy
+    # type is built as `<label>: '<snippet>...'` ("Bug/blocker mentioned: '…'", "New
+    # requirement mentioned: '…'"). The label's own words are then counted among the five
+    # discriminating words, and they can NEVER appear in an Issue body, so two of five
+    # slots are spent before the comparison starts and the check under-matches
+    # systematically: an insight genuinely present in the body is still reported as a
+    # violation. Measured on dotfiles#569 Gate 3 — the body scored 4/5 on the snippet's
+    # own words and 2/5 on the formatted text, so the gate blocked a body that already
+    # carried the insight. Strip the label back off before matching.
+    m = re.match(r"^[^']*'(?P<snippet>.*)\.\.\.'\s*$", comment_snippet, re.DOTALL)
+    if m:
+        comment_snippet = m.group('snippet')
+    else:
+        # Fail LOUD rather than falling through with the label still attached, which would
+        # silently reproduce the exact under-match this strip exists to fix. Unreachable for
+        # the four fuzzy types that exist today — all build `<label>: '<snippet>...'`, and
+        # the two non-fuzzy types return above — so this costs nothing now. It is here for
+        # the next insight type added to detect_insight_patterns() without that shape:
+        # without it, the regression is invisible, and this script has no CI caller to catch
+        # it (#569 Stage 5).
+        print(
+            f"WARNING: insight text shape not recognised, matching on the raw string "
+            f"(label words may be counted as evidence): {comment_snippet!r}",
+            file=sys.stderr,
+        )
 
     # For other insights, do fuzzy text matching (first 50 chars)
     # Extract meaningful words from comment snippet

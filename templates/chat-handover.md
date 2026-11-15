@@ -61,11 +61,17 @@ Before generating any handover message, post a checkpoint to the current Issue a
 - path/to/file1.ext (added X function, modified Y)
 - path/to/file2.ext (refactored Z, fixed bug in W)
 
+**Checkbox State** (AP #20): X/Y closed (Tier A open: [exact text of any open Tier A boxes, or "none"]; Tier B deferred-to-end: [count, or "none"]). Next session uses this to resume without re-querying the Issue body.
+
+**Ralph state**: `ralph_restarts: N` (read it, do not estimate: `bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --get`; `INERT` means it is not being tracked — say so rather than writing 0), plus `escalated: yes|no` — yes when `last_escalation_restart` in the state file (`--print-state-path`) is non-null. `--escalate` (the one fix agent was dispatched) resets the count to 0, so after it `0` with `escalated: yes` means no cycle is left: the next production fault is stop-and-report. Carried here because a mid-issue compact otherwise loses the count entirely, and the post-compact session would resume believing the fix-cycle limit had not been approached.
+
 **Token Usage**: X / {model_window} (Y% used)
 
 **Context for Next Session**:
 [Any important context that isn't obvious from the above]
 ```
+
+The `ralph_restarts` line above is MANDATORY, not illustrative. Read it from the counter (`bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --get`) rather than estimating, and if the counter reports `RALPH-COUNTER INERT` write that word — never a bare `0`. A mid-issue compact otherwise loses the restart count entirely, and the resuming session reads the missing number as "the bound has not been approached" on an issue that may already be at its second fix cycle, or past the escalation with none left. (dotfiles#556 AC 2.12; escalation disclosure #577.)
 
 ### Step 2: Generate Handover (AFTER Step 1)
 
@@ -194,6 +200,7 @@ If session dies before posting checkpoint:
    - `git log -5 --oneline` to see recent commits
    - `git diff` to see uncommitted changes
    - `git status` to see modified files
+   - `git rev-list --count <base>..HEAD` for any commit COUNT written into a handover — never a hand-written list; the next session re-derives inherited counts anyway (Leader.md Stage-4 handover-count re-derivation gate)
 
 3. **Review Modified Files**:
    - Use git diff to understand changes

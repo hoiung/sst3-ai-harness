@@ -33,6 +33,32 @@ Issue #83 finds Stage 3 instructions unclear about commit frequency.
 
 ## Common Failure Scenarios
 
+### Scenario 0: ExitWorktree refuse — stale local main vs origin/master
+
+**Symptoms**:
+- `ExitWorktree action:remove` (or `action:remove discard_changes:true`) returns refusal
+- Refusal message references "commits not on the original branch" or "unmerged commits"
+- The worktree's solo branch IS server-merged on origin/master (Gate-2 push succeeded)
+
+**Root Cause**: the EnterWorktree session was created against a local main/master that is now BEHIND origin/master. Gate-2's server-side fast-forward advanced origin/master, but the operator's local main ref was not refreshed. ExitWorktree compares the worktree's branch against the LOCAL main, sees commits-not-on-main, and refuses removal to protect (what it sees as) un-merged work.
+
+**Recovery Steps**:
+1. From the main-clone (NOT from inside the worktree), refresh the local master ref:
+   - `git -C <main-clone> fetch origin master`
+2. Verify local main now matches the server-merged tip:
+   - `git -C <main-clone> log origin/master..HEAD` should be empty (no local commits ahead)
+3. Re-invoke `ExitWorktree action:remove` from inside the worktree (or `discard_changes:true` if appropriate per the operator's risk tolerance — only after the verification above confirms nothing is actually un-merged)
+
+**Prevention**:
+- After a Gate-2 server-FF push succeeds, run `git -C <main-clone> fetch origin master` to refresh the local main ref BEFORE ExitWorktree
+- Consider running `git fetch --prune` periodically on the main clone during multi-worktree sessions to keep refs current
+
+**Reference**:
+- Related: dotfiles#495 NEW-2 finding (Stage 1 research)
+- Cross-reference: `[[feedback-worktree-remove-is-metadata-not-cohabitation-mutation]]` — ExitWorktree cleanup is metadata-only and Cohabitation-safe; this scenario covers the ref-staleness false-positive
+
+---
+
 ### Scenario 1: Verification False PASS
 
 **Symptoms**:
@@ -339,18 +365,7 @@ Issue #83 finds Stage 3 instructions unclear about commit frequency.
 - Run pre-flight checks before applying
 - Verify quality didn't degrade after change
 
----
-
-## Effectiveness Target
-
-**Goal**: <1 instruction gap per issue after 20 issues
-
-**Measurement**:
-- Track issues where subagents couldn't execute due to unclear instructions
-- Percentage should decrease over time
-- If increasing: Self-healing is making things worse (stop and audit)
-
-**Meta-Validation**: Self-healing should improve quality, not degrade it
+**Effectiveness target**: <1 instruction gap/issue after 20 issues. If the gap rate rises, self-healing is degrading quality — stop and audit. (#531: one-line restore of an over-cut directional rule.)
 
 ---
 
@@ -362,6 +377,7 @@ Issue #83 finds Stage 3 instructions unclear about commit frequency.
 - Issue #128: Automated enforcement, baseline requirement
 - Issue #131: Quality First, restoration strategy
 
----
+**Companion reference docs** (this guide's mechanisms in detail):
 
-*Self-healing must validate itself - measure before/after effectiveness*
+- [`pruning-strategy.md`](pruning-strategy.md) — when/what to prune (RED/ORANGE budget alerts, guardrail-protected content that is NEVER pruned, per-500-token quality gates)
+- [`validation-protocol.md`](validation-protocol.md) — the 3-Issue observation period that moves a self-healing addition VALIDATING → VALIDATED / AUTO-REVERT

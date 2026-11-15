@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
+[#406 Phase 9 — MANUAL UTILITY] Not wired into .pre-commit-config.yaml or CI by design. Invoke directly when needed (manual workflow tool, not a per-commit hook).
+
 Enhanced pruning analyzer with guardrail detection for Issue #119.
 Safely identifies pruning targets while protecting critical workflow content.
 """
 
 import re
+import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Set
@@ -63,9 +66,15 @@ class GuardrailAwarePruningAnalyzer:
         'Stage Summaries',
     }
 
+    FLAT_LAYOUT_DIRS = ('standards', 'workflow', 'templates', 'reference', 'ralph')
+
     def __init__(self, base_path: Path):
         self.base_path = base_path
         self.sst3_path = base_path / 'SST3'
+        # The public mirror is flat: no SST3/ directory, the framework's document
+        # directories sit at the repository root. Scan those there.
+        self.scan_roots = ([self.sst3_path] if self.sst3_path.is_dir() else
+                           [base_path / d for d in self.FLAT_LAYOUT_DIRS if (base_path / d).is_dir()])
         self.issue_history_limit = 20
 
     def count_tokens(self, text: str) -> int:
@@ -142,20 +151,23 @@ class GuardrailAwarePruningAnalyzer:
         }
 
     def _read_all_md_files(self) -> Dict[Path, str]:
-        """Read all non-archived .md files once into a dict."""
+        """Read all non-archived .md files once into a dict.
+
+        Fail-loud per AP #12: warn on unreadable files instead of silent skip.
+        """
         files = {}
-        for md_file in self.sst3_path.rglob('*.md'):
+        md_files = [f for root in self.scan_roots for f in root.rglob('*.md')]
+        for md_file in md_files:
             if 'archive' in str(md_file):
                 continue
             try:
                 with open(md_file, 'r', encoding='utf-8') as f:
                     files[md_file] = f.read()
-            except UnicodeDecodeError:
-                try:
-                    with open(md_file, 'r', encoding='cp1252') as f:
-                        files[md_file] = f.read()
-                except Exception:
-                    continue
+            except (UnicodeDecodeError, OSError) as e:
+                print(
+                    f"WARNING: skipping {md_file}: {e}",
+                    file=sys.stderr,
+                )
         return files
 
     def find_duplicate_content(self, all_files: Dict[Path, str]) -> List[Dict]:
@@ -463,13 +475,14 @@ def main():
     """Main function."""
     base_path = Path.cwd()
 
+    analyzer = GuardrailAwarePruningAnalyzer(base_path)
+
     # Ensure we're in the right directory
-    if not (base_path / 'SST3').exists():
-        print("[ERROR] SST3 directory not found. Run from dotfiles root.")
+    if not analyzer.scan_roots:
+        print("[ERROR] No SST3/ directory and no framework directories "
+              f"({', '.join(analyzer.FLAT_LAYOUT_DIRS)}) here. Run from the repository root.")
         print(f"        Current directory: {base_path}")
         return 1
-
-    analyzer = GuardrailAwarePruningAnalyzer(base_path)
 
     # Generate and display report
     report = analyzer.generate_pruning_report()

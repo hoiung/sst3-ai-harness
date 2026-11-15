@@ -1,14 +1,16 @@
 <!-- stages: 4 -->
 # Mutation Verification — Stage-4 Canonical (#567)
 
-THE canonical definition of "every new guard is mutation-verified". The Verification Loop, `three-tier-testing.md`, the Ralph tier checklists, and `ralph-review.md`'s escalation section all POINT here (AP #10 — the escalation section keeps its own one-sentence copy for sweep context, nothing else restates the spec).
+**Scope: opt-in.** This spec applies only to a guard protecting money, data loss, security or a customer-facing figure, or when the operator asks (`ralph-review.md` "Proof of a fix"; money = code that moves real money or places live orders, not exploration, paper or lab code). Everywhere else the proof of a fix is one test that fails when the fix is reverted, and nothing below is required.
+
+THE canonical definition of "every opted-in guard is mutation-verified". The Verification Loop, `three-tier-testing.md`, the Ralph tier checklists, and `ralph-review.md` "Proof of a fix" all POINT here (AP #10 — nothing else restates the spec).
 
 **The rule**: a gate — any test or check whose purpose is to reject a defect class — is **UNPROVEN until it has been shown to fail**. A gate that passes unconditionally satisfies EXIST and RUN and ships green; the only defence is proof it reddens on its own defect. Evidence (`Issue #3`): 9 review rounds reading gates found 4 members of a defect class that mechanical mutation found 217 of; a client-facing figure was falsified with all 107 tests green.
 
 <!-- stages: 4 -->
 ## The mutation table (required artefact for any gate-bearing diff)
 
-For any diff that ADDS or MODIFIES a gate, the tier-evidence line carries a mutation result backed by a **mutation table** — one row per gate:
+For an opted-in diff that ADDS or MODIFIES a gate, the tier-evidence line carries a mutation result backed by a **mutation table** — one row per gate:
 
 | gate | defect re-injected | reddens? | negative control | stays green? |
 |------|--------------------|----------|------------------|--------------|
@@ -62,7 +64,7 @@ Do not re-dispatch reviewers to re-audit a class an enumeration already covers. 
 
 - `three-tier-testing.md` — PROVE clause, the third requirement beside EXIST (BUILD) and RUN (USE) (gate-bearing diffs carry the mutation result within whichever tier holds the gate).
 - `verification-loop.md` — the `unproven` recording rule + loop checkbox.
-- `ralph-review.md` — fix-time class-ledger rule; escalation sweep contract (deterministic enumeration as a permitted, where-enumerable preferred, method).
+- `ralph-review.md` — "Proof of a fix": the opt-in rule and the default (one test that fails when the fix is reverted).
 - `templates/class-ledger-template.md` + `SST3-metrics/class-ledger/` — where each closed class's enumerator + mutation proof is recorded.
 - `STANDARDS.md` "Why three — not two, not four" — mutation stays a technique WITHIN the three tiers; the taxonomy is not split (operator ruling D1, #567).
 - `claude/hooks/tests/lib/mutation-harness.sh` — the reusable harness (AP #10: extend, never re-roll).

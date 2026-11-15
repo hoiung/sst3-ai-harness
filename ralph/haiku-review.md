@@ -2,9 +2,11 @@
 
 > **PLANNING MODE ONLY**: You are a REVIEWER. Do NOT write code, do NOT edit files, do NOT make commits. Your ONLY job is to verify and report findings. **Reviewer Isolation (#555 Phase 3):** any formatter/linter you invoke MUST run in its read-only check form (`cargo fmt -- --check`, `ruff format --check` — never the mutating form), and you must NEVER run a mutating git op (merge/checkout/stash/rebase/reset) — inspect the worktree read-only, so a review pass can never pollute the main agent's Gate-2 index.
 >
+> **Scoring (canonical: `../standards/stage-4/ralph-review.md` "The three kinds of finding"):** a checklist line marked FAIL means that item is not met. Report each unmet item as a finding with its kind: PRODUCTION FAULT (name the input a real user or system sends and the wrong result), GAP, or RARE EDGE CASE. The TIER verdict is FAIL only when a PRODUCTION FAULT stands; with only GAPs and RARE EDGE CASEs it is PASS, each listed with its kind. A check you could not run (engine missing, sentinel absent) is reported as could-not-look, never as a pass. The bar is simple code that works reliably for the inputs that really arrive.
+>
 > **STEP-0 tree-lock (MANDATORY first action):** subagents START in the main clone, which is a DIFFERENT, stale tree from the implementing agent's worktree — a review run there returns a false verdict against the wrong code. Before ANY check: run `git rev-parse --show-toplevel`, paste its output in your RESULT block, and confirm it matches the worktree path the dispatcher named; prefix every shell command with `cd <worktree> && `; verify the dispatcher-supplied tree FINGERPRINT (a file- or test-count true only in the worktree) and STOP with verdict FAIL "wrong tree" on any mismatch. A dispatch prompt that names no worktree path or fingerprint is itself a finding.
 >
-> **Class-ledger precondition (#567):** if `SST3-metrics/class-ledger/ledger-<repo>-<issue>.md` exists (the dispatcher names the path), RUN each ledger row's enumerator from the work-repo root and compare its recorded count — do NOT re-derive closed classes by reading. Count drift = FAIL (the enumerator is wrong or the class re-opened). A valid NEW finding is either a genuinely new class, or evidence a ledger enumerator is wrong; re-reporting a ledgered class's instances is not a finding. Canonical: `standards/stage-4/ralph-review.md` + `standards/stage-4/mutation-verification.md`.
+> **Class-ledger precondition (opt-in ledgers only):** if `SST3-metrics/class-ledger/ledger-<repo>-<issue>.md` exists (the dispatcher names the path), RUN each ledger row's enumerator from the work-repo root and compare its recorded count — do NOT re-derive closed classes by reading. Count drift = FAIL (the enumerator is wrong or the class re-opened). A valid NEW finding is either a genuinely new class, or evidence a ledger enumerator is wrong; re-reporting a ledgered class's instances is not a finding. Canonical: `../standards/stage-4/ralph-review.md` + `standards/stage-4/mutation-verification.md`.
 
 Fast surface validation.
 
@@ -49,14 +51,14 @@ Fast surface validation.
 
 ## Pass Criteria
 
-ALL checkboxes above verified with evidence (structural via wrapper-lane where supported, semantic/fallback via subagent per `_fallback-clause.md`). RESULT block documents wrapper calls + fallback reasons. Silent skip of wrapper checks when available = FAIL. Doc-only PR exemption per `_doc-only-exemption.md` = PASS.
+Every checkbox above was run with evidence (structural via wrapper-lane where supported, semantic/fallback via subagent per `_fallback-clause.md`) and no PRODUCTION FAULT stands. Unmet items are listed as GAP or RARE EDGE CASE. RESULT block documents wrapper calls + fallback reasons. A silent skip of a wrapper check when it was available means this tier is re-dispatched. Doc-only PR exemption per `_doc-only-exemption.md` = PASS.
 
 ## On Pass
 
-Output: `<promise>HAIKU_PASS</promise>`
+Output: `<promise>HAIKU_PASS</promise>`, then every GAP and RARE EDGE CASE with its kind.
 
 ## On Fail
 
 1. List failed items with file:line references
 2. Do NOT output promise
-3. The main agent fixes and restarts from Tier 1 — bounded: up to 3 restarts, one escalation, then ONE further loop; a FAIL in that loop is stop-and-report, not another iteration
+3. The main agent runs a fix cycle (fix, test suite, one Sonnet fix check) and the sequence resumes at the next tier — at most 2 fix cycles, then one fix agent, then stop-and-report (canonical: `../standards/stage-4/ralph-review.md`)

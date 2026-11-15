@@ -281,8 +281,10 @@ merged_branch_delete() {
 # switch -C, update-ref, fetch +src:branch) and rm long-option prefixes, each measured against
 # real git. The pass now reads the command with the shared shell reader _lib-shellcmd.py (the
 # shell's own quoting, operators and nested commands) and gets one record per destructive
-# statement. It adds DENYs only; the regexes stay as written. A branch force-delete it finds
-# goes through the merged-branch check like the regex's.
+# statement. For a command it reads whole its verdict stands (dotfiles#582): the plain patterns
+# no longer veto it, so a destructive command quoted as data is not denied. DROP TABLE alone
+# stays a text match on every command. A branch force-delete the reader finds goes through
+# the merged-branch check like the regex's.
 # A part the reader cannot see (opaque: a script piped in from another program, a process
 # substitution, words that expand at run time), or a reader that is missing or failed, sends
 # the whole text through the plain patterns again with quotes and backslashes removed, so a
@@ -292,6 +294,7 @@ STRUCT_REASON=""
 STRUCT_BRANCH=0
 STRUCT_OFF=0
 STRUCT_OPAQUE=""
+STRUCT_CARRIER=""
 struct_scan() {
   local lib out
   lib="$(dirname "${BASH_SOURCE[0]}")/_lib-shellcmd.py"
@@ -304,6 +307,7 @@ struct_scan() {
   [[ -n "$out" ]] || return 0
   STRUCT_REASON="$(printf '%s\n' "$out" | jq -r 'select(has("kind") and .kind != "branch-force-delete") | .reason' 2>/dev/null | head -n 1)"
   STRUCT_OPAQUE="$(printf '%s\n' "$out" | jq -r 'select(has("opaque")) | .opaque' 2>/dev/null | head -n 1)"
+  STRUCT_CARRIER="$(printf '%s\n' "$out" | jq -r 'select(has("carrier")) | .carrier' 2>/dev/null | head -n 1)"
   printf '%s\n' "$out" | jq -e -s 'any(.[]; .kind == "branch-force-delete")' >/dev/null 2>&1 && STRUCT_BRANCH=1
   return 0
 }
@@ -350,6 +354,15 @@ fi
 # plain_checks <text> — the plain patterns, on the command text as given or (for a command
 # the reader could not see whole) with quotes and backslashes removed.
 BR_CHECKED=0
+# sql_check <text> — DROP TABLE (SQL embedded in shell args or scripts). SQL reaches the
+# shell as a quoted argument the structural reader does not parse, so this one pattern
+# runs on every command, read whole or not.
+sql_check() {
+  if [[ "$1" =~ (DROP|drop)[[:space:]]+(TABLE|table)([[:space:]]|;|$) ]]; then
+    emit_deny "DROP TABLE (SQL destructive)" "$CMD"
+  fi
+  return 0
+}
 plain_checks() {
   local text="$1"
   # git push --force / --force-with-lease / -f / refspec `+ref:ref`.
@@ -383,22 +396,36 @@ plain_checks() {
   if [[ "$text" =~ (^|[^[:alnum:]_-])rm[[:space:]]+(-[A-Za-z]*[rR][A-Za-z]*[fF][A-Za-z]*|-[A-Za-z]*[fF][A-Za-z]*[rR][A-Za-z]*)([[:space:]].+)?[[:space:]]+/($|[^.]) ]]; then
     emit_deny "rm -rf / (filesystem destruction)" "$CMD"
   fi
-  # DROP TABLE (SQL embedded in shell args or scripts).
-  if [[ "$text" =~ (DROP|drop)[[:space:]]+(TABLE|table)([[:space:]]|;|$) ]]; then
-    emit_deny "DROP TABLE (SQL destructive)" "$CMD"
-  fi
+  sql_check "$text"
   return 0
 }
 if [[ "$OVERRIDE" != "1" ]]; then
-  plain_checks "$CLASSIFY"
   # Structural pass (header above): the command as the shell reads it.
   struct_scan "$CLASSIFY"
-  [[ -n "$STRUCT_REASON" ]] && emit_deny "$STRUCT_REASON" "$CMD"
-  if (( STRUCT_OFF )) || [[ -n "$STRUCT_OPAQUE" ]]; then
-    audit unread-recheck "${STRUCT_OPAQUE:-reader off}"
-    plain_checks "${CLASSIFY//[\'\"\\]/}"
+  UNREAD=0
+  if (( STRUCT_OFF )) || [[ -n "$STRUCT_OPAQUE" ]]; then UNREAD=1; fi
+  if (( UNREAD )) || [[ -n "$STRUCT_CARRIER" ]] || [[ "$CLASSIFY" =~ $HEREDOC_OP_RE ]]; then
+    # Not read whole, a heredoc that is classified whole (its body can be run by the
+    # statement around it), or a carrier: a command not known to treat its arguments as
+    # data, which may run them where the reader does not look (ssh, docker exec, su -c).
+    # The plain patterns decide as well, on the text as given and, for an unread command,
+    # again with quotes and backslashes removed.
+    plain_checks "$CLASSIFY"
+    [[ -n "$STRUCT_REASON" ]] && emit_deny "$STRUCT_REASON" "$CMD"
+    if (( UNREAD )); then
+      audit unread-recheck "${STRUCT_OPAQUE:-reader off}"
+      plain_checks "${CLASSIFY//[\'\"\\]/}"
+    fi
+  else
+    # Read whole, and every command in it only reads its arguments as data (echo, printf,
+    # grep, rg, jq, a commit message): the reader's verdict stands, so a destructive
+    # command's words carried as data are no longer a DENY (dotfiles#582 AC 2.8). Every
+    # statement that would RUN one, here or through a carrier, still is.
+    [[ -n "$STRUCT_REASON" ]] && emit_deny "$STRUCT_REASON" "$CMD"
+    sql_check "$CLASSIFY"
   fi
   if (( STRUCT_BRANCH && ! BR_CHECKED )); then
+    BR_SUBJECT="${CLASSIFY//$'\\\n'/ }"
     merged_branch_delete
     [[ -n "$BR_REASON" ]] && emit_deny "git branch force-delete not confirmed merged: $BR_REASON" "$CMD"
     audit allow-merged-branch "$CMD"

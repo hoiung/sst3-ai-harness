@@ -134,7 +134,8 @@ require_engine_version() {
 SST3_JQ_CANON_PATH='def canon: if startswith($cwd) then .[($cwd | length):] else . end | sub("^(\\./)+"; "");'
 
 # Read NDJSON file emitting one file path per line, deduplicated, in input order.
-# Each NDJSON record must have a `.file` string. Records lacking `.file` are skipped.
+# Each NDJSON record must have a `.file` string. Records lacking `.file` are skipped;
+# a list in which NO record has one exits 65 (dotfiles#582).
 # Used by --paths-from <file> retrofit (Phase 8) and the self-test driver.
 # Paths come out in the canonical spelling above. A list that is not valid NDJSON,
 # a `.file` that is not a string, or a path holding a control character (a newline
@@ -162,7 +163,13 @@ read_paths_from() {
         echo "ERROR: --paths-from $ndjson_file is not a list of {\"file\": \"<path>\"} records, so which files to scan is unknown: ${listed##*$'\n'}" >&2
         exit 65
     fi
-    [[ -n "$listed" ]] && printf '%s\n' "$listed" | awk '!seen[$0]++'
+    if [[ -z "$listed" ]]; then
+        # Records with another key (or an empty list) gave no path at all. Returning
+        # nothing here read as "no list" to the caller, which then scanned the whole tree.
+        echo "ERROR: --paths-from $ndjson_file is not a list of {\"file\": \"<path>\"} records, so which files to scan is unknown: no record carries a .file path" >&2
+        exit 65
+    fi
+    printf '%s\n' "$listed" | awk '!seen[$0]++'
     return 0
 }
 

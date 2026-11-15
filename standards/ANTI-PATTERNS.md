@@ -481,7 +481,7 @@ The manual `mcp__github-checkbox__update_issue_checkbox` invocation is the canon
 
 **How to apply**: Layer-2 subagents present follow-up findings as a COMMENT on the parent issue's Stage 5 summary, NOT as a new GitHub issue. Creating a new issue requires the main agent to surface the proposed scope to the user in chat and obtain explicit approval BEFORE calling `mcp__github__create_issue`. When in doubt, comment don't create.
 
-**Related**: STANDARDS.md "Subagent Orchestration Discipline" (subagent read-only contract); Leader.md Stage 5 DON'T list (added #431 Phase 2b — "Create new GitHub issues autonomously…"); AP #13 ("Proceed" ≠ "Bypass Process" — user authorisation never bypasses workflow, and the inverse: never presume authorisation for scope not discussed).
+**Related**: STANDARDS.md "Subagent Orchestration Discipline" (subagent read-only contract; one exception, the Ralph `ralph-fixer` escalation agent); Leader.md Stage 5 DON'T list (added #431 Phase 2b — "Create new GitHub issues autonomously…"); AP #13 ("Proceed" ≠ "Bypass Process" — user authorisation never bypasses workflow, and the inverse: never presume authorisation for scope not discussed).
 
 ---
 

@@ -151,7 +151,9 @@ EOF
     if [[ "$rc" -eq 3 ]]; then
         UNREADABLE_COUNT=$((UNREADABLE_COUNT + 1))
     fi
-    if [[ "$STRICT" -eq 1 ]] && grep -q '"valid": false' <<<"$OUT"; then
+    # Counted with or without --strict (the summary line on exit states it either
+    # way); only the exit code below is --strict's.
+    if grep -q '"valid": false' <<<"$OUT"; then
         INVALID_COUNT=$((INVALID_COUNT + 1))
     fi
 done

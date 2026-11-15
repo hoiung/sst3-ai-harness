@@ -19,8 +19,8 @@
 # LIMIT — READ THIS BEFORE ASSUMING IT ENFORCES ANYTHING.
 #       The counter OBSERVES; the main agent ENFORCES. `SubagentStop` cannot
 #       block or redirect the main agent's next dispatch, and `SubagentStart`
-#       has no documented blocking capability. Nothing here can stop a 6th
-#       restart. Enforcement is the main agent acting on the Phase-1 prose.
+#       has no documented blocking capability. Nothing here can stop a further
+#       fix cycle. Enforcement is the main agent acting on the Phase-1 prose.
 #       Canonical statement: standards/stage-4/ralph-review.md.
 #
 # THE COUNTING MODEL — `--restart` is the SOLE authority for the count.
@@ -74,9 +74,9 @@
 #   (stdin JSON)         observe one SubagentStop event
 #   --print-state-path   print the resolved state file path
 #   --print-log-path     print the resolved log file path
-#   --restart            main agent signals a round boundary at fix time
-#   --escalate           main agent signals the class-sweep escalation:
-#                        restarts reset to zero, boundary logged
+#   --restart            main agent signals a fix cycle
+#   --escalate           main agent signals the escalation (the one fix agent was
+#                        dispatched): the count resets to zero, boundary logged
 #   --get                print the current restart count (0 if no state); stderr
 #                        names the issue and worktree it was read for, because
 #                        the key comes from the cwd: run from another Issue's
@@ -87,7 +87,8 @@
 #                        Stage-5 Ralph restart does not inherit Stage 4's terminal
 #                        state. The KEY is unchanged: a new key would silently zero
 #                        every in-flight issue's count (the #568 key change needed a
-#                        migration). Idempotent: a second --stage5 keeps the archive.
+#                        migration). A second --stage5 opens a new Stage-5 round:
+#                        the Stage-4 archive is kept, Stage 5's own count restarts.
 #
 # EXIT   0 normal. 2 = unknown mode. 3 = INERT (branch derivation failed) —
 #        deliberately NOT a bare 0, so the boundary is visible instead of reading
@@ -108,7 +109,7 @@ set -uo pipefail
 STATE_DIR="${SST3_RALPH_COUNTER_STATE_DIR:-$HOME/.claude/hooks/ralph-restart-state}"
 LOG="${SST3_RALPH_COUNTER_LOG:-$HOME/.claude/hooks/ralph-restart-counter.log}"
 LOG_MAX_BYTES="${SST3_RALPH_COUNTER_LOG_MAX_BYTES:-5242880}"
-BOUND="${SST3_RALPH_RESTART_BOUND:-3}"
+BOUND="${SST3_RALPH_RESTART_BOUND:-2}"   # same default in sst3-subagent-result-parser.sh (bound=)
 TIERS_PER_ROUND="${SST3_RALPH_TIERS_PER_ROUND:-3}"
 
 # These three knobs are interpolated into arithmetic and `[[ -gt ]]`. Raw, they
@@ -599,9 +600,9 @@ case "$MODE" in
     printf '%s\n' "$RESTARTS"; exit 0 ;;
 
   --restart)
-    # #567 terminal-state observation: after an escalation, canon permits exactly
-    # ONE further Ralph loop — a FAIL in it STOPS the loop (stop-and-report), it
-    # does not restart. So EVERY --restart arriving with a recorded escalation is
+    # Terminal-state observation: --restart marks a fix cycle. After the escalation
+    # (the one fix agent) canon permits no further fix cycle — a production fault
+    # there STOPS the loop (stop-and-report). So EVERY --restart arriving with a recorded escalation is
     # the loop continuing PAST its terminal state — a LEVEL trigger, not an edge:
     # the first post-escalation restart crosses the boundary and each further one
     # keeps violating (#567 Ralph T3 F3 — an edge trigger announced only the
@@ -620,23 +621,27 @@ case "$MODE" in
     audit "restart" "explicit-signal-from-main-agent"
     if [[ "$TERMINAL_CROSSED" -eq 1 ]]; then
       audit "terminal-boundary-crossed" "restart-after-escalation last_escalation_restart=$LAST_ESC — canon permits ONE post-escalation loop then stop-and-report"
-      printf 'RALPH-COUNTER TERMINAL BOUNDARY CROSSED: a restart was signalled AFTER an escalation (last_escalation_restart=%s). Canon (#567, stage-4/ralph-review.md) permits exactly ONE further Ralph loop after the escalation; a FAIL in it STOPS the loop with a report to the operator — it does not restart. Stop and report the outstanding findings with their classes.\n' \
+      printf 'RALPH-COUNTER TERMINAL BOUNDARY CROSSED: a restart was signalled AFTER an escalation (last_escalation_restart=%s). Canon (stage-4/ralph-review.md) permits ONE fix agent after the fix cycles; a production fault after it STOPS the loop with a report to the operator — it does not start another fix cycle. Stop and report the outstanding findings with their kinds.\n' \
         "$LAST_ESC" >&2
     fi
     note_bound
+    # A fix cycle signalled past the limit with no escalation on record is said aloud,
+    # not only logged: the next step canon allows is the one fix agent.
+    LIMIT_EXCEEDED=0
+    if [[ "$LAST_ESC" == "null" && "$RESTARTS" -gt "$BOUND" ]]; then LIMIT_EXCEEDED=1; fi
+    if [[ "$LIMIT_EXCEEDED" -eq 1 ]]; then
+      printf 'RALPH-COUNTER LIMIT EXCEEDED: fix cycle %s was signalled and the limit is %s. Canon (stage-4/ralph-review.md) sends a production fault after the limit to the ONE fix agent (signal --escalate), not to another fix cycle.\n' \
+        "$RESTARTS" "$BOUND" >&2
+    fi
     exit 0 ;;
 
   --escalate)
-    # AC 2.5. Canon says "resume Ralph with the restart count reset to zero".
-    # The counter is STRUCTURALLY BLIND to the sweep itself — AC 2.2's matcher
-    # deliberately excludes the escalation Workflow's own subagents so the sweep
-    # does not inflate the very number it was triggered by. Without this explicit
-    # reset the count would read 4,5,6 after the escalation while canon says
-    # 1-3: wrong from the escalation onward. (#567: the cycle no longer repeats —
-    # after the escalation exactly ONE further Ralph loop is permitted, then the
-    # loop STOPS with a report; see the post-escalation-restart observation in
-    # --restart above. The reset semantics here are unchanged.)
-    # An escalation below the bound is not refused — the operator may sweep early,
+    # Signalled when the one fix agent (ralph-fixer) is dispatched. The counter is
+    # STRUCTURALLY BLIND to that agent (the matcher sees only ralph-review), so the
+    # escalation exists in state only through this signal. The count resets to 0 and
+    # last_escalation_restart records where it fired; any --restart after it is the
+    # terminal breach observed in --restart above.
+    # An escalation below the bound is not refused — the operator may escalate early,
     # and a hook must not veto the agent — but it IS recorded, because it resets
     # the count and would otherwise be indistinguishable from a bound-reached
     # escalation when λ is computed.
@@ -677,7 +682,7 @@ case "$MODE" in
     AUDIT_RESTARTS="$ESC_FROM" audit "escalation-boundary" "resetting restarts=$ESC_FROM -> 0 bound=$BOUND"
     if [[ "$SECOND_ESC" -eq 1 ]]; then
       audit "second-escalation-observed" "canon permits ONE escalation per issue — prior last_escalation_restart=$PRIOR_ESC; reset applied anyway (observe, never veto)"
-      printf 'RALPH-COUNTER SECOND ESCALATION OBSERVED: an escalation was signalled with one already recorded (prior last_escalation_restart=%s). Canon (#567, stage-4/ralph-review.md) permits ONE escalation, then ONE further Ralph loop, then stop-and-report — a second escalation is the loop past its terminal state. Stop and report the outstanding findings with their classes.\n' \
+      printf 'RALPH-COUNTER SECOND ESCALATION OBSERVED: an escalation was signalled with one already recorded (prior last_escalation_restart=%s). Canon (stage-4/ralph-review.md) permits ONE fix agent, then one fix check, then stop-and-report — a second escalation is the loop past its terminal state. Stop and report the outstanding findings with their kinds.\n' \
         "$PRIOR_ESC" >&2
     fi
     exit 0 ;;
@@ -687,10 +692,15 @@ case "$MODE" in
     # its fixes. Without this, that loop inherited Stage 4's state: a Stage 4 that
     # ended escalated read every Stage-5 --restart as TERMINAL BOUNDARY CROSSED, and
     # a Stage 4 that ended at the bound started Stage 5 already spent.
-    # Idempotent — a second --stage5 (a resume after a compact) must not overwrite
-    # the archive with Stage 5's own numbers.
+    # A second --stage5 is a new Stage-5 round on the same key: the Stage-4 archive
+    # is kept (never overwritten with Stage 5's own numbers), and Stage 5's own
+    # numbers start again, so a later round does not inherit an earlier round's
+    # escalation (every --restart then read TERMINAL BOUNDARY CROSSED).
     if [[ "$STAGE" -ge 5 ]]; then
-      audit "stage5-already-entered" "stage=$STAGE — archive kept (stage4_restarts=$S4_RESTARTS stage4_last_escalation_restart=$S4_LAST_ESC)"
+      S5_PRIOR="restarts=$RESTARTS last_escalation_restart=$LAST_ESC"
+      RESTARTS=0; ROUND=1; TIER_EVENTS=0; LAST_ESC="null"
+      write_state || exit 4
+      audit "stage5-already-entered" "stage=$STAGE — new round, prior $S5_PRIOR discarded; archive kept (stage4_restarts=$S4_RESTARTS stage4_last_escalation_restart=$S4_LAST_ESC)"
       exit 0
     fi
     S4_RESTARTS="$RESTARTS"; S4_LAST_ESC="$LAST_ESC"

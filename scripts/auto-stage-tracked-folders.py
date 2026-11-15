@@ -10,19 +10,20 @@ from pathlib import Path
 
 from sst3_limits import TRACKED_AUTOSTAGE_FOLDERS  # F1.14 single source of truth
 
-# dotfiles#488 AC 3.1: the leader-feedback telemetry subtree is staged
-# PER-FILE (only the discovered feedback file[s]) so a concurrent agent's
-# in-flight feedback-<other>-<n>.md is NOT swept into this commit. Every
-# OTHER path under SST3-metrics (notably .tier-a-auto-tick/ — the #477
-# auto-tick sentinels) keeps whole-folder staging via the :(exclude)
-# pathspec, which also still honours .gitignore for the now-untracked
-# feedback-index.ndjson (the AC 2.2 index-not-staged invariant).
+# Per-Issue records under SST3-metrics (a leader-feedback feedback-*.md, anything
+# under class-ledger/) are NEVER auto-staged: the session that owns one adds it by
+# exact path. This hook cannot tell whose file it is, and staging "every untracked
+# or modified one" put other sessions' in-flight files into whichever commit ran
+# first. Every OTHER path under SST3-metrics (notably .tier-a-auto-tick/ — the #477
+# auto-tick sentinels) keeps whole-folder staging via the :(exclude) pathspecs,
+# which also still honour .gitignore for the untracked feedback-index.ndjson.
 SCOPED_FEEDBACK_DIR = "SST3-metrics/leader-feedback"
+SCOPED_LEDGER_DIR = "SST3-metrics/class-ledger"
 # Flat telemetry files only. The strict filename/format check is the
 # commit-stage feedback_parser.py hook (AC 3.2) — here a coarse glob is
-# sufficient to decide ownership-scoped staging.
+# sufficient to decide which files are left to their owner.
 SCOPED_FEEDBACK_GLOB = "feedback-*.md"
-# The folder whose leader-feedback subtree gets per-file scoping. The other
+# The folder whose per-Issue records are left out. The other
 # TRACKED_AUTOSTAGE_FOLDERS entries (archive, docs) stay whole-folder.
 SCOPED_PARENT_FOLDER = "SST3-metrics"
 
@@ -37,6 +38,13 @@ def _is_scoped_feedback(path: str) -> bool:
         return False
     rel = p[len(prefix):]
     return "/" not in rel and rel.startswith("feedback-") and rel.endswith(".md")
+
+
+def _is_per_issue_record(path: str) -> bool:
+    """True iff `path` is a per-Issue record this hook leaves to its owner: a flat
+    leader-feedback feedback-*.md, or any file under class-ledger/."""
+    p = path.replace("\\", "/")
+    return _is_scoped_feedback(p) or p.startswith(SCOPED_LEDGER_DIR + "/")
 
 
 def get_untracked_and_modified_files(folders):
@@ -82,7 +90,8 @@ def auto_stage_folders(folders):
     `git add` fails partway through, reset all already-staged folders
     to avoid leaving the index in an inconsistent half-staged state.
     """
-    files = get_untracked_and_modified_files(folders)
+    files = [f for f in get_untracked_and_modified_files(folders)
+             if not _is_per_issue_record(f)]
 
     if not files:
         return 0
@@ -111,18 +120,15 @@ def auto_stage_folders(folders):
             continue
         try:
             if folder == SCOPED_PARENT_FOLDER:
-                # #488 AC 3.1: whole-folder EXCEPT the leader-feedback
-                # feedback-*.md files (preserves .tier-a-auto-tick/ #477
-                # sentinels + honours .gitignore for the untracked index),
-                # then per-file add ONLY this commit's own discovered
-                # feedback file(s) — never a bystander's in-flight file.
+                # Whole-folder EXCEPT the per-Issue records (preserves the
+                # .tier-a-auto-tick/ #477 sentinels + honours .gitignore for
+                # the untracked index). Feedback files and class ledgers are
+                # added by their owner, by exact path — never here.
                 _add([
                     folder,
                     f":(exclude){SCOPED_FEEDBACK_DIR}/{SCOPED_FEEDBACK_GLOB}",
+                    f":(exclude){SCOPED_LEDGER_DIR}",
                 ])
-                owned = sorted(f for f in files if _is_scoped_feedback(f))
-                if owned:
-                    _add(owned)
             else:
                 _add([folder])
         except subprocess.CalledProcessError as exc:

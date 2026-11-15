@@ -65,7 +65,7 @@
 - [ ] [Specific acceptance criterion]
 
 ### Engineering Requirements (if code changes)
-- [ ] **Fix Everything**: All problems found get fixed — no deferrals, no scope excuses, no language boundaries
+- [ ] **Fix Everything**: All problems found get fixed — no deferrals, no scope excuses, no language boundaries (a RARE EDGE CASE is recorded per `stage-4/ralph-review.md`, not fixed)
 - [ ] **Type Contracts**: Every function parameter type annotation verified against actual callers. `None` callers → annotation must be `T | None` with null guard.
 - [ ] **Schema Contracts**: Every SQL query's column names verified against actual DB schema (`\d tablename` or migration file). SQL literal values match DB data.
 - [ ] **Config Traceability**: Every YAML key added is read by code. Dead config (key in YAML, never read) = FAIL. List key → code location.
@@ -220,7 +220,7 @@ Every Acceptance Criteria checkbox MUST have an explicit verification command/me
 
 ### Ralph Review Loop (MANDATORY - Automated 3-Tier Review)
 
-> **REQUIRED**: Implement → Haiku → Sonnet → Opus. **Subagents are PLANNING ONLY** (review, do NOT write code). FAIL any tier: fix + restart Tier 1, up to 3 restarts, then ONE escalation, then ONE final loop, then STOP-and-report (terminal state).
+> **REQUIRED**: Implement → Haiku → Sonnet → Opus, each reviewing the whole diff once. **Subagents are PLANNING ONLY** (review, do NOT write code; the one exception is the escalation fix agent). A tier FAILs only on a PRODUCTION FAULT (shipped code gives a wrong result for an input a real user or system can send): fix → test suite → ONE Sonnet fix check on the fix diff → next tier; at most 2 fix cycles, then ONE fix agent (the strongest model available, Fable where offered), then STOP-and-report (terminal state). GAPs (tests, docs, records, hygiene) are fixed in place; RARE EDGE CASEs are recorded, not fixed. Canonical: `standards/stage-4/ralph-review.md`.
 
 #### Tier 1: Haiku Subagent (Surface Checks)
 **Model**: `haiku` (MANDATORY)

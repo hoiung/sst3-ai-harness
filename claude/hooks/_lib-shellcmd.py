@@ -22,6 +22,10 @@ USAGE  python3 _lib-shellcmd.py <mode> [--cwd DIR] < command-text
   git          NDJSON per git invocation and `gh pr checkout`: {tool, cwd, git_dir, verb, args}
   destructive  NDJSON per DENY: {kind, reason}. kind "branch-force-delete" is not a DENY by
                itself: the caller runs its merged-branch check. Every other kind is a DENY.
+               Also {"carrier": name} per command that is not known to treat its arguments
+               as data (anything but echo, printf, grep, rg, jq, rm and a few git verbs): it
+               may run them elsewhere (ssh, docker exec, su -c), so the caller keeps its
+               whole-text check for that command line (#582).
   cwd is null where the directory cannot be known (`cd -`, `cd $VAR`, popd past the start).
   Every mode adds {"opaque": why} for a part whose text only exists at run time: a script
   piped in from a program the reader cannot run, a process-substitution script, a script or
@@ -946,6 +950,35 @@ def rm_destructive(args):
     return []
 
 
+# Commands whose arguments are data to them (dotfiles#582 AC 2.8). The list is an ALLOW list
+# on purpose: any other command may run its arguments somewhere this reader cannot see (ssh,
+# docker exec, su -c, kubectl exec, a script interpreter's -c), so it is a carrier.
+_DATA_COMMANDS = frozenset({"echo", "printf", "grep", "egrep", "fgrep", "rg", "jq"})
+_DATA_GIT_VERBS = frozenset({"commit", "log", "tag", "notes"})     # not grep: -O names a program
+# A data command stops being one when the line hands it a program to run: an environment
+# variable that names one (the editor of `git commit --amend`, the differ of `git log
+# --ext-diff`), or an option that does (rg --pre, ugrep --filter / --pager / --view).
+_PROGRAM_ENV = frozenset({"GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_EXTERNAL_DIFF", "GIT_PAGER",
+                          "GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "GIT_PROXY_COMMAND",
+                          "EDITOR", "VISUAL", "PAGER"})
+_PROGRAM_OPTIONS = frozenset({"--pre", "--hostname-bin", "--filter", "--pager", "--view"})
+
+
+def _carrier(name: str, gv, args, env) -> bool:
+    """Can this command run one of its own arguments where the reader does not look?"""
+    if name == "rm":                      # its operands are paths; rm_destructive judges them
+        return False
+    if _PROGRAM_ENV & env.keys():
+        return True
+    if name == "git":
+        # A config given on the command line can name a program to run (core.pager,
+        # core.sshCommand, diff.external), and most verbs outside the list take one too
+        # (submodule foreach, rebase --exec, bisect run).
+        return not (gv["verb"] in _DATA_GIT_VERBS and not gv["configs"]
+                    and not gv["env_config"] and not gv["shell_alias"])
+    return name not in _DATA_COMMANDS or any(a.partition("=")[0] in _PROGRAM_OPTIONS for a in args)
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("commands", "git", "destructive"):
         print(__doc__.split("USAGE", 1)[1].split("EXIT", 1)[0], file=sys.stderr)
@@ -973,6 +1006,8 @@ def main(argv):
         if name == "git":                 # every mode: an alias it defines changes later commands
             gv = git_view(av, s, env)
             note_alias(gv)
+        if mode == "destructive" and _carrier(name, gv, [w.s() for w in av[1:]], env):
+            records.append({"carrier": name})
         if mode == "commands":
             records.append({"argv": [w.s() for w in av], "cwd": s.cwd, "env": env})
         elif gv is not None:

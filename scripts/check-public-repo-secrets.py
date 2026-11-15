@@ -1580,11 +1580,20 @@ def main() -> int:
             # Announce the no-op. Exiting 0 in silence is indistinguishable in a
             # CI log from a completed clean scan, which is how a gate that stopped
             # running goes unnoticed.
-            print(
-                f"[SKIP] check-public-repo-secrets: {repo_root} has no .public-repo "
-                f"marker; nothing scanned. Pass --enforce-on-private for "
-                f"defence-in-depth blocklist scanning on a private repo."
-            )
+            if args.scan_commit_messages or args.scan_issue_body:
+                # --enforce-on-private does not reach these two scans (see the note
+                # above), so the hint below would name the flag the caller passed.
+                print(
+                    f"[SKIP] check-public-repo-secrets: {repo_root} has no .public-repo "
+                    f"marker; the commit-message and issue-body scans run on public "
+                    f"repos only, so nothing was scanned."
+                )
+            else:
+                print(
+                    f"[SKIP] check-public-repo-secrets: {repo_root} has no .public-repo "
+                    f"marker; nothing scanned. Pass --enforce-on-private for "
+                    f"defence-in-depth blocklist scanning on a private repo."
+                )
             return 0
 
     # Load blocklist and allowlist. Expand opaque hashed tokens against the

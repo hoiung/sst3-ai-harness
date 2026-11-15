@@ -2,9 +2,11 @@
 
 > **PLANNING MODE ONLY**: You are a REVIEWER. Do NOT write code, do NOT edit files, do NOT make commits. Your ONLY job is to verify and report findings. **Reviewer Isolation (#555 Phase 3):** any formatter/linter you invoke MUST run in its read-only check form (`cargo fmt -- --check`, `ruff format --check` — never the mutating form), and you must NEVER run a mutating git op (merge/checkout/stash/rebase/reset) — inspect the worktree read-only, so a review pass can never pollute the main agent's Gate-2 index.
 >
+> **Scoring (canonical: `../standards/stage-4/ralph-review.md` "The three kinds of finding"):** a checklist line marked FAIL means that item is not met. Report each unmet item as a finding with its kind: PRODUCTION FAULT (name the input a real user or system sends and the wrong result), GAP, or RARE EDGE CASE. The TIER verdict is FAIL only when a PRODUCTION FAULT stands; with only GAPs and RARE EDGE CASEs it is PASS, each listed with its kind. A check you could not run (engine missing, sentinel absent) is reported as could-not-look, never as a pass. The bar is simple code that works reliably for the inputs that really arrive.
+>
 > **STEP-0 tree-lock (MANDATORY first action):** subagents START in the main clone, which is a DIFFERENT, stale tree from the implementing agent's worktree — a review run there returns a false verdict against the wrong code. Before ANY check: run `git rev-parse --show-toplevel`, paste its output in your RESULT block, and confirm it matches the worktree path the dispatcher named; prefix every shell command with `cd <worktree> && `; verify the dispatcher-supplied tree FINGERPRINT (a file- or test-count true only in the worktree) and STOP with verdict FAIL "wrong tree" on any mismatch. A dispatch prompt that names no worktree path or fingerprint is itself a finding.
 >
-> **Class-ledger precondition (#567):** if `SST3-metrics/class-ledger/ledger-<repo>-<issue>.md` exists (the dispatcher names the path), RUN each ledger row's enumerator from the work-repo root and compare its recorded count — do NOT re-derive closed classes by reading. Count drift = FAIL (the enumerator is wrong or the class re-opened). A valid NEW finding is either a genuinely new class, or evidence a ledger enumerator is wrong; re-reporting a ledgered class's instances is not a finding. Canonical: `standards/stage-4/ralph-review.md` + `standards/stage-4/mutation-verification.md`.
+> **Class-ledger precondition (opt-in ledgers only):** if `SST3-metrics/class-ledger/ledger-<repo>-<issue>.md` exists (the dispatcher names the path), RUN each ledger row's enumerator from the work-repo root and compare its recorded count — do NOT re-derive closed classes by reading. Count drift = FAIL (the enumerator is wrong or the class re-opened). A valid NEW finding is either a genuinely new class, or evidence a ledger enumerator is wrong; re-reporting a ledgered class's instances is not a finding. Canonical: `../standards/stage-4/ralph-review.md` + `standards/stage-4/mutation-verification.md`.
 
 Thorough architectural review.
 
@@ -49,7 +51,7 @@ Thorough architectural review.
 - [ ] **Scope completeness**: enumerate every Acceptance Criteria checkbox from issue body — each maps to specific file:line. Any without = NOT DONE.
 - [ ] **Data correction architecture**: bug producing bad DB state → fix includes BOTH (a) code fix for future AND (b) verified data repair for existing rows.
 - [ ] **Full-module re-run on contract change (AC 5.4)**: for any function contract change, re-run the FULL test module, not only the new tests — confirm zero regressions in the sibling tests that exercise the changed contract indirectly.
-- [ ] **Adversarial-overlap corpus for security gates (AC 5.4)**: for security gates (allowlists, blocklists, fail-loud gates), generate an adversarial-overlap corpus of malformed-but-truthy inputs (string-vs-bool, leading/trailing whitespace, `"0"` / `"false"` strings, empty-string, unicode look-alikes) and confirm the gate produces the correct outcome on each — a gate proven only on clean inputs is unproven against the inputs an attacker actually sends. **Scope + timing (#555 Phase 3):** this corpus requirement equally covers approval/consent/name-detection CLASSIFIERS (multi-message threads, non-Latin scripts, negated phrasing, re-edit-after-approval), and the corpus must be seeded at the first test pass (implementation write time) — Opus VERIFIES it exists in the checked-in tests; a corpus first discovered here forces a restart-from-Tier-1.
+- [ ] **Adversarial-overlap corpus for security gates (AC 5.4)**: for security gates (allowlists, blocklists, fail-loud gates), generate an adversarial-overlap corpus of malformed-but-truthy inputs (string-vs-bool, leading/trailing whitespace, `"0"` / `"false"` strings, empty-string, unicode look-alikes) and confirm the gate produces the correct outcome on each — a gate proven only on clean inputs is unproven against the inputs an attacker actually sends. **Scope + timing (#555 Phase 3):** this corpus requirement equally covers approval/consent/name-detection CLASSIFIERS (multi-message threads, non-Latin scripts, negated phrasing, re-edit-after-approval), and the corpus must be seeded at the first test pass (implementation write time) — Opus VERIFIES it exists in the checked-in tests; a corpus missing here is a GAP the main agent adds in place.
 
 ### Factual Claims Audit
 - [ ] Enumerate all numeric assertions in documentation, issue body, design rationale; verify each has source (benchmark, prior issue, measured observation, command output). No source = flag as unverified — must be sourced or removed before OPUS_PASS.
@@ -82,17 +84,17 @@ Thorough architectural review.
 
 ### Break-one-claim — the job enumeration cannot do (#567 Phase 6)
 
-> A mutation sweep answers only for classes someone enumerated (`mutation-verification.md`). This angle is the complement: handed ONE claim, break it. Both classes the `Issue #3` sweep missed (transposition, sign flip) came from exactly this prompt shape — not from a general "review this diff" pass.
+> Handed ONE claim, break it. One claim per dispatch — this is not a general re-review.
 
-- [ ] Pick ONE load-bearing claim in the diff (a figure, a gate's coverage statement, a sweep headline) and try to BREAK it: name a mutation class the gates/sweep do NOT generate (sign, order, unit, transposition, magnitude scale, vocabulary widening). Report either a class that survives with a concrete mutant, or the classes tried and the evidence each is covered. One claim per dispatch — this is not a general re-review.
+- [ ] Pick ONE load-bearing claim in the diff (a figure, a stated behaviour, a gate's coverage statement) and try to BREAK it with an input a real user or system can send. Report the input and the wrong result (a PRODUCTION FAULT), or the inputs tried and the result of each. Where an opt-in mutation sweep exists (`mutation-verification.md`), also name one class it does not generate (sign, order, unit, transposition, magnitude scale).
 
 ## Pass Criteria
 
-ALL checkboxes above verified with evidence. Wrapper-lane was available and not used for structural architectural question = FAIL. Doc-only PR exempted per [`_doc-only-exemption.md`](_doc-only-exemption.md) = PASS. Unavailable / stale / unsupported-language WITH subagent RESULT block showing manual architectural audit was performed per [`_fallback-clause.md`](_fallback-clause.md) = PASS. Architectural review without structural evidence (wrapper-backed OR subagent-backed with RESULT block) is incomplete and fails.
+Every checkbox above was run with evidence and no PRODUCTION FAULT stands. Unmet items are listed as GAP or RARE EDGE CASE. Wrapper-lane available and not used for a structural architectural question means this tier is re-dispatched. Doc-only PR exempted per [`_doc-only-exemption.md`](_doc-only-exemption.md) = PASS. Unavailable / stale / unsupported-language WITH subagent RESULT block showing manual architectural audit was performed per [`_fallback-clause.md`](_fallback-clause.md) = PASS. Architectural review without structural evidence (wrapper-backed OR subagent-backed with RESULT block) is incomplete: this tier is re-dispatched.
 
 ## On Pass
 
-Output: `<promise>OPUS_PASS</promise>`
+Output: `<promise>OPUS_PASS</promise>`, then every GAP and RARE EDGE CASE with its kind.
 
 ## On Fail
 
@@ -100,4 +102,4 @@ Output: `<promise>OPUS_PASS</promise>`
 2. Explain why it violates standards
 3. Suggest specific fix
 4. Do NOT output promise
-5. The main agent fixes and restarts from Tier 1 — bounded: up to 3 restarts, one escalation, then ONE further loop; a FAIL in that loop is stop-and-report, not another iteration
+5. The main agent runs a fix cycle (fix, test suite, one Sonnet fix check) and the sequence resumes at the next tier — at most 2 fix cycles, then one fix agent, then stop-and-report (canonical: `../standards/stage-4/ralph-review.md`)

@@ -78,21 +78,22 @@
 
 **What was left out and why?**
 
-> **CRITICAL RULE**: Only confirmed false positives can be skipped. If a test finds a problem, FIX IT. "Pre-existing", "not in scope", "low priority" are NOT valid reasons to defer.
+> **CRITICAL RULE**: Only confirmed false positives and recorded RARE EDGE CASEs (`[edge-case: <why rare>]`, below) can be skipped. If a test finds a problem a real input reaches, FIX IT. "Pre-existing", "not in scope", "low priority" are NOT valid reasons to defer.
 
 ### Items Not Fixed
 For each item NOT fixed, answer:
 - [ ] Is this a confirmed false positive? (Yes/No)
-- [ ] If No: **STOP** — fix it now before proceeding. No deferrals, no excuses.
+- [ ] If No: **STOP** — fix it now before proceeding, unless it carries one of the flags below. No other deferrals, no excuses.
 - [ ] If Yes: Document WHY it's a false positive with evidence.
 
-**3-flag deferral taxonomy (#477 AC 2.6 — Theme 7)**: every item left in this section MUST carry one of three explicit flags. Items lacking a flag default to UNVERIFIED status and trigger the Stage 5 §3-Deferral Re-Litigation Angle (per the Leader workflow Stage 5 step 1).
+**4-flag deferral taxonomy (#477 AC 2.6 — Theme 7)**: every item left in this section MUST carry one of four explicit flags. Items lacking a flag default to UNVERIFIED status and trigger the Stage 5 §3-Deferral Re-Litigation Angle (per the Leader workflow Stage 5 step 1).
 
 - `[deferred-FP: <evidence>]` — confirmed false positive (file:line / command output / cross-reference). Evidence is mandatory; "looks fine" / "not relevant" / "pre-existing" are NOT evidence.
 - `[deferred-N/A: <rationale>]` — intentional descope with operator-acknowledged rationale (out of scope for this issue, observed but not in plan, deferred via written agreement). Rationale must name the boundary.
+- `[edge-case: <why rare>]` — a RARE EDGE CASE (needs a chain of unlikely events, or an input no shipped path sends) recorded instead of fixed per `standards/stage-4/ralph-review.md` "The three kinds of finding". Say why it is rare. Never for a consequence of money loss, data loss or a security hole: that is a production fault and is fixed.
 - `[deferred-tracking-issue: <issue#>]` — feasible fix moved to a tracking issue (must reference an OPEN issue in this or a sibling repo). Comment-only intent ≠ tracking issue; the issue must exist.
 
-The absence of any flag IS the trigger for Stage 5 re-litigation — no explicit `[deferred-UNVERIFIED]` flag needed. **Verify**: `grep -cE '\[deferred-(FP|N/A|tracking-issue):' templates/user-review-checklist.md` returns ≥3 (the three example tokens above).
+The absence of any flag IS the trigger for Stage 5 re-litigation — no explicit `[deferred-UNVERIFIED]` flag needed. **Verify**: `grep -cE '\[(deferred-(FP|N/A|tracking-issue)|edge-case):' templates/user-review-checklist.md` returns ≥4 (the four example tokens above).
 
 ### Discovered During Implementation
 - [ ] List any issues/improvements discovered during implementation
@@ -111,7 +112,7 @@ For any number, ratio, or capacity claim appearing in this issue's documentation
 - [ ] Self-reported estimates must be labelled as estimates, not presented as facts
 - [ ] "Seems reasonable" is not a source — flag and fix
 
-**Principle**: Everything real gets fixed. No such thing as high/low priority. The only valid skip is a confirmed false positive.
+**Principle**: Everything real gets fixed. No such thing as high/low priority. The only valid skips are a confirmed false positive and a recorded RARE EDGE CASE.
 
 ---
 

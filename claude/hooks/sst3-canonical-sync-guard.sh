@@ -102,16 +102,25 @@ fire_dirs="$(printf '%s\n' "$recs" | jq -r '
   | select(($t == "cargo" and (($w[0] // "") | IN("build", "run")))
         or ($t == "npm" and $w[0:2] == ["run", "build"])
         or ($t == "systemctl" and ($a | index("restart")) != null and any($a[]; startswith("pb-"))))
-  | if .cwd == null then "-" else "+" + .cwd end' 2>/dev/null | sort -u)"
+  | (if $t == "systemctl" then "r" else "b" end) as $k
+  | if .cwd == null then "-" else $k + "+" + .cwd end' 2>/dev/null | sort -u)"
 [[ -z "$fire_dirs" ]] && exit 0
 
-# check_dir <dir>: is the canonical clone of the repository <dir> is in behind origin?
-# Always the canonical clone, not a worktree: it hosts the binary / live service.
+# check_dir <b|r>+<dir>: is the canonical clone of the repository <dir> is in behind origin?
+# The canonical clone, not a worktree, hosts the binary / live service — so a restart (r)
+# is always judged against it. A build (b) run inside a LINKED WORKTREE compiles that
+# worktree's own source: the canonical clone's position says nothing about it, and warning
+# "STALE source" there was false (dotfiles#582 AC 2.12).
 check_dir() {
-  local dir="${1#+}" common root default behind
-  [[ "$1" == +?* ]] || degraded "the guard could not tell which directory the build/restart runs in (a cd it cannot follow)"
+  local kind="${1%%+*}" dir="${1#*+}" common root default behind gitdir
+  [[ "$1" == [br]+?* ]] || degraded "the guard could not tell which directory the build/restart runs in (a cd it cannot follow)"
   common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
   [[ -n "$common" ]] || return 0
+  if [[ "$kind" == b ]]; then
+    # In a linked worktree the git dir is <common>/worktrees/<name>, not the common dir.
+    gitdir="$(git -C "$dir" rev-parse --path-format=absolute --git-dir 2>/dev/null)" || gitdir=""
+    [[ -n "$gitdir" && "$gitdir" != "$common" ]] && return 0
+  fi
   if [[ "${common##*/}" == ".git" ]]; then root="${common%/.git}"; else root="$common"; fi
   # No origin remote: there is nothing to be behind (R38 — a fresh `cargo new` repo got
   # an instruction to fetch and pull from a remote it does not have).

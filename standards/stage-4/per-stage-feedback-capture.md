@@ -45,7 +45,7 @@ Canonical telemetry mechanism for the SST3 5-stage `/Leader` workflow. Each `/Le
 <!-- stages: 4 -->
 ### Write mechanics and enforcement (Stage-4 operative)
 
-**Soft-cap guidance**: tiny issues 10-20 lines per stage block / medium 30-60 / large 60-120 / >150 revisit. **Hard cap**: 10 fields exactly. Parser emits stderr WARNING (advisory, exit 0) if a per-stage block exceeds 80 lines. Tiny-issue terminal one-liners permitted (`rule_user_caught: none` / `friction: trivial`).
+**Soft-cap guidance**: tiny issues 10-20 lines per stage block / medium 30-60 / large 60-120 / >150 revisit. **Hard cap**: 10 fields exactly, plus the closure fields the closure tool writes beside `improvement_status` (`**applied_in**:`, `**disposition**:`). Parser emits stderr WARNING (advisory, exit 0) if a per-stage block exceeds 80 lines. Tiny-issue terminal one-liners permitted (`rule_user_caught: none` / `friction: trivial`).
 
 **YAML authoring note (AC 2.7)**: use unstyled YAML field names (`graph_applicable: false`, not backtick-wrapped). Allowed values for `graph_applicable`: `false | hybrid | true` — do not invent synonyms. YAML inline comments inside scalar values cause parse failures. The Stage-2 entry validator (`check-stage1-research-fields.py`) hard-blocks on any of these authoring errors.
 
@@ -63,7 +63,7 @@ Canonical telemetry mechanism for the SST3 5-stage `/Leader` workflow. Each `/Le
 
 **Post-compact reconstruction protocol**: if an agent compacted mid-stage and cannot recover original observations, fields use the literal marker `[reconstructed-post-compact: <evidence-source>]` (e.g. `[reconstructed-post-compact: chat-handover.md]`, `[reconstructed-post-compact: phase-3-checkpoint-comment]`). Frontmatter `reconstructed_stages: [N]` flag set. Aggregator weights these lower in DRIFT ALERT counts so reconstructed observations don't dominate signal.
 
-**Stage 4 sub-structure**: Stage 4 `worked` / `didnt` MAY contain per-Ralph-tier sub-bullets (Tier 1 Haiku / Tier 2 Sonnet / Tier 3 Opus). The `friction` field captures `ralph_restarts: <N>` + per-tier outcomes (PASS / FAIL → restart → PASS).
+**Stage 4 sub-structure**: Stage 4 `worked` / `didnt` MAY contain per-Ralph-tier sub-bullets (Tier 1 Haiku / Tier 2 Sonnet / Tier 3 Opus). The `friction` field captures `ralph_restarts: <N>` (fix cycles) + per-tier outcomes (PASS / FAIL → fix cycle → PASS) + the fix agent's verdict when escalated.
 
 **Activation-sha gate**: `SST3-metrics/leader-feedback/.activation-sha` holds the canonical merge SHA when this mechanism lands on master. The `sst3-metrics-feedback-present` pre-commit hook fires only on solo branches whose first commit descends from `.activation-sha`. Pre-existing branches grandfathered (hook exits 0 with stderr note `pre-activation branch: hook skipped, hand-write feedback retroactively if desired`).
 

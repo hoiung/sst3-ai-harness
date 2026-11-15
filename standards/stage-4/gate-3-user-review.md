@@ -24,9 +24,10 @@ Final Stage-4 gate. Runs AFTER Gate 2 merge lands on origin/master. Uses the `..
 <!-- stages: 4 -->
 ## §3 Gap Analysis — No-Excuses Gate (post-Cut-#9 contract)
 
-Every item in §3 "Items Not Fixed" MUST carry one of three explicit flags (canonical: template §3 + Leader.md Stage 5 §3-Deferral angle):
+Every item in §3 "Items Not Fixed" MUST carry one of four explicit flags (canonical: template §3 + Leader.md Stage 5 §3-Deferral angle):
 - `[deferred-FP: <evidence>]` — confirmed false positive
 - `[deferred-N/A: <rationale>]` — intentional descope
+- `[edge-case: <why rare>]` — a RARE EDGE CASE recorded per `ralph-review.md` "The three kinds of finding" (never one whose consequence is money loss, data loss or a security hole)
 - `[deferred-tracking-issue: <issue#>]` — moved to a referenced OPEN issue. **OPEN-state check**: template §3. <!-- c4:T45 --> A deferral that names an owner (a tracking issue, another repo, a later phase) is checked against the scope of that owner: the owner's body must cover the item, or the flag is re-classified.
 
 Items without any flag default to UNVERIFIED → trigger Stage 5 re-litigation. **F-15 (#498)**: this applies to the AGENT's own §3 entries — no self-exemption.

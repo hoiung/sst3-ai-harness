@@ -98,7 +98,7 @@ Skills are AI-for-AI. A skill (`.claude/skills/*/SKILL.md` + companions, `.claud
 <!-- stages: 2 -->
 ### Quality Mantras (Doctrinal — 9 items)
 
-These 9 mantras are the canonical authoring + audit criteria invoked verbatim from every Stage of /Leader, the issue template's Quality Mantras section, and the user-review-checklist. WORKFLOW.md Stage-3 surfaces a 5-item operational subset; the doctrinal list lives only here.
+These 9 mantras are the canonical authoring + audit criteria invoked verbatim from every Stage of /Leader, the issue template's Quality Mantras section, and the user-review-checklist. WORKFLOW.md Stage-3 surfaces a 5-item operational subset; the doctrinal list lives only here. The one real finding that is recorded instead of fixed is a RARE EDGE CASE (`stage-4/ralph-review.md` "The three kinds of finding").
 
 - No inefficiencies, fix optimisation opportunities
 - Reliable and robust (not prone to breakage or failing)
@@ -256,7 +256,7 @@ See: ../workflow/WORKFLOW.md (Stage 1 — Research) for research-specific critic
 
 #### Default Dispatch Mechanism — the Workflow tool (#514)
 
-**Rule**: the dynamic **Workflow tool** is the DEFAULT dispatch mechanism for every `/Leader` parallel swarm (Stage 1 research, Stage 2 draft-check, Stage 3 sanity-check, Stage 5 post-implementation audit). Author the swarm inline and run it via the Workflow tool; do NOT hand-dispatch Agent/Task subagents for these swarms. Plain Agent/Task dispatch is retained ONLY as a documented fallback for a trivial single-angle check (one reader, no cross-check layer). This supersedes #507's optional/`ultracode`-gated framing: "optional" had no reliable trigger — the imperative "Launch parallel subagents" overrode the soft "MAY", so the feature never fired even when explicitly directed. Ralph Review tiers (sequential Haiku→Sonnet→Opus, restart-on-fail) and the AP #20 "Layer 1/2/3" checkbox-MCP enforcement gates are NOT swarms — they stay Agent/Task and are NOT converted. The escalation Workflow is not a Ralph tier and does not convert Ralph's sequential tiers to a swarm: it is a distinct dispatch that fires when the restart bound is reached, produces fixes, and hands back to Ralph for tier verification.
+**Rule**: the dynamic **Workflow tool** is the DEFAULT dispatch mechanism for every `/Leader` parallel swarm (Stage 1 research, Stage 2 draft-check, Stage 3 sanity-check, Stage 5 post-implementation audit). Author the swarm inline and run it via the Workflow tool; do NOT hand-dispatch Agent/Task subagents for these swarms. Plain Agent/Task dispatch is retained ONLY as a documented fallback for a trivial single-angle check (one reader, no cross-check layer). This supersedes #507's optional/`ultracode`-gated framing: "optional" had no reliable trigger — the imperative "Launch parallel subagents" overrode the soft "MAY", so the feature never fired even when explicitly directed. Ralph Review tiers (sequential Haiku→Sonnet→Opus, each reviewing the whole diff once) and the AP #20 "Layer 1/2/3" checkbox-MCP enforcement gates are NOT swarms — they stay Agent/Task and are NOT converted. The Ralph escalation is not a Workflow and not a tier: it is ONE `ralph-fixer` Agent dispatch (Fable, high effort) that fires on the third production fault, writes the fix, and is followed by one Sonnet fix check (`stage-4/ralph-review.md`).
 
 **Monitoring (AP #16)**: a backgrounded Workflow run is launched-not-done. The orchestrator MUST **monitor** the Workflow end-to-end: launch → await the completion notification (or poll its status) → read the run output → verify every finding against source (AP #14) before acting. A `wf_…` run id is recorded in the stage checkpoint as the audit trail. "Started" is never "complete". <!-- c4:T15 --> Workflow legs write to script-named paths, never leg-chosen ones. Narrative legs return free text ending in a fenced RESULT block or, if schema'd, cap string fields at 1,200+ chars. Never put `head`/`tail` between a writer and a load-bearing exit code (use `PIPESTATUS` or a full-output file; the Bash Output Budgets `tail -n 100` is for logs, not gating); gate chained commands (`set -e` or per-step exit checks). A pausable run saves each leg's result to a file and ends with a continuation script over them; never edit one prompt of a concurrent fan-out and resume (later legs re-run live). Syntax-check the script or run a 1-agent smoke leg before full dispatch.
 
@@ -692,10 +692,10 @@ The opaque-token mechanism for hash-redacting literal business identifiers in pu
 <!-- stages: always -->
 ### Fix Everything — No Scope/Language Excuses
 
-**Principle**: Fix ALL problems found. No deferrals, no scope/language excuses.
+**Principle**: Fix ALL problems found. No deferrals, no scope/language excuses. One non-fix exists besides a false positive: a RARE EDGE CASE (needs a chain of unlikely events, or an input no shipped path sends) is recorded in the user-review-checklist §3 as `[edge-case: <why rare>]`, unless its consequence is money loss, data loss or a security hole (canonical: `stage-4/ralph-review.md` "The three kinds of finding").
 
-**DO**: Fix every real bug — Python, Rust, JS, SQL, YAML, shell. Only valid skip: confirmed false positive (document why).
-**DON'T**: "not in scope", "pre-existing", priority tiers — if it's real, fix it.
+**DO**: Fix every real bug — Python, Rust, JS, SQL, YAML, shell. Only valid skips: a confirmed false positive (document why), or a recorded RARE EDGE CASE.
+**DON'T**: "not in scope", "pre-existing", priority tiers — if a real input reaches it, fix it.
 
 ---
 
@@ -816,8 +816,8 @@ The opaque-token mechanism for hash-redacting literal business identifiers in pu
 **Enforcement Mechanisms**:
 - **Stage 1 Research Gate**: Must complete before writing Issue body
 - **Stage 3 Triple-Check Gate**: Must complete before Solo Assignment
-- **Verification Loop**: Repeat until ALL pass (overengineering, reuse, duplication, fallbacks, wiring, regression, quality)
-- **Ralph Review**: Haiku → Sonnet → Opus — all 3 must pass before merge
+- **Verification Loop**: Repeat until ALL pass (overengineering, reuse, duplication, fallbacks, wiring, regression, quality); a RARE EDGE CASE is recorded, not looped on
+- **Ralph Review**: Haiku → Sonnet → Opus — all 3 must pass before merge (a tier FAILs only on a PRODUCTION FAULT; at most 2 fix cycles, then one fix agent, then stop-and-report: `stage-4/ralph-review.md`)
 - **user-review-checklist.md**: ALL sections mandatory
 - **Pre-commit hooks**: Block on size limits, propagation, hardcoded params, debug code
 
@@ -1038,11 +1038,11 @@ all (#565).
   false on a `lab`/`prod` node, where the installer clones three repos and the
   gate demanded twenty-four, making an `always_run` pre-commit AND pre-push hook
   unpassable by construction while printing a remedy that could not fix it
-- A probed clone holding commits that exist on no remote. Primitive:
+- A probed clone holding main-line commits that exist on no remote. Primitive:
   `git rev-list --count --branches --not --remotes=origin` — no network, no
-  default-branch resolution. In-flight `solo/*` worktree branches and commits
-  touching only `SST3-metrics/` are excluded by design; both are unpushed on
-  purpose
+  default-branch resolution. Counted (#582): `main`/`master` or a detached HEAD,
+  over 60 minutes old. Not counted: other branches (work in progress), younger
+  main-line commits (between commit and push), commits touching only `SST3-metrics/`
 
 Every could-not-look path reports `PROBE_FAILED` and exits non-zero. A probe
 that could not run must never be indistinguishable from a probe that ran and
@@ -1207,14 +1207,14 @@ SST3 **builds and uses three co-equal test tiers** that work together (they comp
 <!-- stages: 4 -->
 ### BUILD vs USE (load-bearing — both halves required: all 3 tiers EXIST *and* all 3 RUN every change)
 - **BUILD: always all 3 tiers.** Every change ships with Unit + Workflow + E2E tests. The tests must EXIST. There is no "this is only a unit, skip tier 2/3" exemption at authoring time.
-- **USE: all 3 tiers RUN (fire & pass) on EVERY change** (operator directive 2026-06-13, dotfiles#528 — this SUPERSEDES the prior "situational / scope-matched fire" rule, of which the operator is the authority). At the Verification Loop, Unit AND Workflow AND E2E each RUN and PASS for this change. The E2E Tier may be *sized* to the change — a small backtest, or an actual execution change + cleanup, where a full whole-system E2E does not apply — but it still RUNS. The ONLY permitted non-run is a tier explicitly recorded `structural-inapplicable: <reason>` (rare — e.g. a pure-doc diff has no Unit surface). Tiers **compose, never substitute** — a higher tier passing does not excuse a missing lower-tier test, and a lower tier passing does not prove the system.
+- **USE: all 3 tiers RUN (fire & pass) on EVERY change** (operator directive 2026-06-13, dotfiles#528 — this SUPERSEDES the prior "situational / scope-matched fire" rule, of which the operator is the authority). At the Verification Loop, Unit AND Workflow AND E2E each RUN and PASS for this change. Each tier runs the tests that cover what the change touches, not every test in the repo ("Which tests get built, and which get run", the last section of this file). The E2E Tier may be *sized* to the change — a small backtest, or an actual execution change + cleanup, where a full whole-system E2E does not apply — but it still RUNS. The ONLY permitted non-run is a tier explicitly recorded `structural-inapplicable: <reason>` (rare — e.g. a pure-doc diff has no Unit surface). Tiers **compose, never substitute** — a higher tier passing does not excuse a missing lower-tier test, and a lower tier passing does not prove the system.
 - **Why both halves**: BUILD (all 3 exist) means the E2E Tier is THERE the day a "small" change unexpectedly impacts the whole system; RUN (all 3 fire every change) means a mis-wired or system-breaking change is caught at the commit that introduced it, not in a later incident — the operator's named failure mode: "it always does unit tests and nothing more … so workflow and E2E tests are never done", and "simple broken implementations that isn't wired properly" slip through. Drop BUILD → the safety net is absent when suddenly needed. Drop the all-3-RUN rule → exactly that: only the Unit Tier ever fires and un-wired implementations ship.
 
 <!-- stages: always -->
 ### Run procedure (operationalises BUILD-vs-USE — all 3 tiers RUN; blast radius only SIZES the E2E tier)
 Run this at authoring time AND again at the Verification Loop:
 1. **BUILD is unconditional**: all 3 tiers' tests must EXIST for the affected surface — write the missing ones in this change. No "unit-only, skip the rest" at authoring time.
-2. **RUN is unconditional**: all 3 tiers RUN (fire & pass) for this change. No scope-skip — a tier that exists but never fires catches nothing.
+2. **RUN is unconditional**: all 3 tiers RUN (fire & pass) for this change. No scope-skip — a tier that exists but never fires catches nothing. Scope picks the tests INSIDE a tier (those that cover the touched files), never whether the tier fires.
 3. **Identify the blast radius** — this no longer decides WHICH tiers run (all 3 do); it SIZES the E2E tier: whole-system change (schema, contract, environment, cross-component) → full E2E against the real environment; workflow- or unit-scoped change → E2E may be a small backtest or an actual execution change + cleanup that exercises the changed path end-to-end. Either way the E2E tier RUNS.
 4. **The ONLY non-run is `structural-inapplicable: <reason>`** — a tier with genuinely no surface for this change (rare; e.g. a pure-doc diff has no Unit surface). Record the reason inline; never silently skip a tier.
 5. **When unsure whether a tier is structural-inapplicable, RUN it** — running a tier is cheap; a wrongly-skipped tier is the incident. Under-claiming inapplicability is the safe direction.
@@ -1222,9 +1222,9 @@ Run this at authoring time AND again at the Verification Loop:
 
 **Required tier-evidence line (defined ONCE here — `WORKFLOW.md` Verification Loop + `issue-template.md` PREREQUISITE CHECKPOINT point to this definition, never redefine it):**
 ```
-tiers: U=<pass|fail|structural-inapplicable:reason> W=<pass|fail|structural-inapplicable:reason> E2E=<pass|fail|structural-inapplicable:reason> M=<reddened+control-green|unproven|n/a:no-gate-in-diff> | BUILD-evidence:<file:line of the checked-in test per tier>
+tiers: U=<pass|fail|structural-inapplicable:reason> W=<pass|fail|structural-inapplicable:reason> E2E=<pass|fail|structural-inapplicable:reason> M=<reddened+control-green|unproven|n/a:not-opted-in> | BUILD-evidence:<file:line of the checked-in test per tier>
 ```
-All 3 tiers must show `pass` (or a documented `structural-inapplicable:<reason>`). A `fail` blocks the Verification Loop; a bare "tests pass" without this line does not satisfy the gate. The `M=` field is the mutation-verification result for gate-bearing diffs (#567 — spec: `stage-4/mutation-verification.md`, duty site: the `stage-4/three-tier-testing.md` PROVE clause): `M=unproven` blocks exactly as a `fail` does — a gate-bearing diff without its mutation table is `unproven`, never `passed`; `M=n/a:no-gate-in-diff` records that the diff carries no gate. <!-- c4:T21 --> The evidence beside the line records the exact command per tier (literal invocation, not only a count).
+All 3 tiers must show `pass` (or a documented `structural-inapplicable:<reason>`). A `fail` blocks the Verification Loop; a bare "tests pass" without this line does not satisfy the gate. The `M=` field is the opt-in mutation-verification result (spec: `stage-4/mutation-verification.md`, duty site: the `stage-4/three-tier-testing.md` PROVE clause). It is required only where the diff carries a guard on money, data loss, security or a customer-facing figure, or the operator asks; there, a guard without its mutation table is `M=unproven` and blocks as a `fail` does. Everywhere else write `M=n/a:not-opted-in`; the proof of a fix is one test that fails when the fix is reverted. <!-- c4:T21 --> The evidence beside the line records the exact command per tier (literal invocation, not only a count).
 
 <!-- stages: 2 -->
 ### Tier composition — never substitute (worked illustration, general)
@@ -1237,11 +1237,11 @@ Higher tiers do NOT substitute for lower (a passing system does not prove every 
 
 <!-- stages: 2 -->
 ### Why three — not two, not four
-Three is canonical because it maps to the three real failure surfaces: a part is wrong (Unit), the parts are wired wrong (Workflow), the whole system meets reality wrong (E2E). Collapsing Workflow into Unit loses the wiring-gap class; collapsing E2E into Workflow loses the real-environment / real-downstream class. Adding a fourth tier (mutation / property / contract testing) is explicitly out of scope — those are *techniques applied within* a tier, not a fourth surface — and for GATES that is a duty, not an option: any diff adding or modifying a gate carries mutation verification per the `stage-4/three-tier-testing.md` PROVE clause and `stage-4/mutation-verification.md` (a gate is unproven until it has been shown to fail; #567). the operator's 3-tier framing is the canonical taxonomy; do not split or merge it.
+Three is canonical because it maps to the three real failure surfaces: a part is wrong (Unit), the parts are wired wrong (Workflow), the whole system meets reality wrong (E2E). Collapsing Workflow into Unit loses the wiring-gap class; collapsing E2E into Workflow loses the real-environment / real-downstream class. Adding a fourth tier (mutation / property / contract testing) is explicitly out of scope — those are *techniques applied within* a tier, not a fourth surface — and mutation verification is opt-in: a guard on money, data loss, security or a customer-facing figure carries it per the `stage-4/three-tier-testing.md` PROVE clause and `stage-4/mutation-verification.md`; elsewhere one test that fails when the fix is reverted is the proof. the operator's 3-tier framing is the canonical taxonomy; do not split or merge it.
 
 <!-- stages: always -->
 ### Glossary: "regression test" vs the three tiers
-"**The project test suite**" — what the Stage 4 Verification Loop runs, and what "no regressions" refers to — is the **union of the checked-in Unit + Workflow + E2E tests**, not any single tier. "**Regression test**" is NOT a synonym for the Unit Tier, nor for any one tier: it is the property that the existing suite (all tiers together) still passes after a change. "**Smoke test**" is a fast subset (typically Unit-Tier-weighted) — necessary but NOT sufficient for the Workflow or E2E tiers (AP #18). Use a tier name when you mean a tier; say "the project test suite" / "regression run" when you mean "all checked-in tests still pass". <!-- c4:T25 --> Gate 1 runs the project test suite locally when CI is dark (WORKFLOW.md Verification Loop).
+"**The project test suite**" (also written "the test suite") — what the Stage 4 Verification Loop and every fix cycle run, and what "no regressions" refers to — is the **checked-in Unit + Workflow + E2E tests that cover what the change touches** ("Which tests get built, and which get run", the last section of this file): not any single tier, and not every test in the repo. "**Regression test**" is NOT a synonym for the Unit Tier, nor for any one tier: it is the property that the existing tests of the touched code (all tiers together) still pass after a change. "**Smoke test**" is a fast subset (typically Unit-Tier-weighted) — necessary but NOT sufficient for the Workflow or E2E tiers (AP #18). Use a tier name when you mean a tier; say "the project test suite" / "regression run" when you mean "the checked-in tests that cover the change still pass". <!-- c4:T25 --> Gate 1 runs the project test suite locally when CI is dark (WORKFLOW.md Verification Loop).
 
 <!-- stages: 2 -->
 ### Cost of skipping each tier (why BUILD is unconditional)
@@ -1302,7 +1302,7 @@ Test in this order:
    - UI polish
    - Nice-to-haves
 
-**Minimum coverage**: 85% for Stage 5 verification
+**Minimum coverage**: 85% for Stage 5 verification (a shortfall is a GAP fixed in place, never a production fault or a fix cycle)
 
 <!-- stages: 2,3 -->
 ### Workflow Validation Gate (AP #18 — MANDATORY)
@@ -1383,7 +1383,7 @@ Cross-link: the **three-signal contract policy** + **Raw-tool cross-validation R
 
 **Distinct from**: AP #18 Workflow Validation Gate (end-to-end pipeline sample) AND the regression-test gate (broader). This discipline targets the specific failure mode where a function compiles, lints, and ships but is never actually exercised by any test — the **call-site seam** between new prod code and tests is missing.
 
-**Three-bullet doctrine** (each bullet is a falsifiable check):
+**Three-bullet doctrine** (each bullet is a falsifiable check; at Ralph an unmet seam is a GAP: the main agent writes the test in place, and if that test fails on shipped code it is a PRODUCTION FAULT, `stage-4/ralph-review.md`):
 
 1. **Function call seams**: For every new public function/method added in a phase, name the test file that imports + invokes it. Verification: `grep -rnE 'from <new-module> import|<new-module>\\.<callable>' tests/`. Empty grep on a new public callable = FAIL.
 2. **Response-payload field assertions**: For every new field added to an API response / JSON payload / dict structure, name the test that asserts the field's presence + value. Verification: `grep -rnE '<field-name>' tests/`. Field with no assertion = FAIL.
@@ -1692,3 +1692,15 @@ Companion to "Default Dispatch Mechanism — the Workflow tool (#514)"; tagged 1
 - **Schema strictness by tier**: haiku = free-text fenced RESULT block (strict schemas retry-cap haiku and waste fan-out slots); sonnet/opus = strict schema. Reserve `schema` for count/inventory angles; prefer free-text + fenced RESULT elsewhere.
 - **Verdict binding**: bind `verdict=fail` STRUCTURALLY whenever any finding severity > INFO — never leave the verdict to narrative judgment. For narrative-verdict opus legs, run a main-agent pre-flight or a tighter per-item schema.
 - **Bounded evidence**: bound `evidence_stdout` length in RESULT schemas so StructuredOutput cannot dead-loop a completed leg; assign any mutating write-then-restore probe to exactly ONE named leg.
+
+<!-- stages: always -->
+## Which tests get built, and which get run
+
+Operator rule, 2026-11-15. The Three-Tier Testing Framework says what KINDS of test a change needs. This section bounds how many are built and how many are run: tests of code a change never touched are not run for it.
+
+- **Build for what real inputs do.** Write tests for the behaviour the change adds or alters, on the inputs a real user or system sends, in each tier that has a surface. Write no test for an edge case that needs a chain of unlikely events or an input no shipped path sends, unless its consequence is money loss, data loss or a security hole (`stage-4/ralph-review.md` "The three kinds of finding"). A missing test for such a case is not a gap. Mutation tables, class ledgers and adversarial corpora are for a guard on money, data loss, security or a customer-facing figure, or when the operator asks; elsewhere the proof of a fix is one test that fails when the fix is reverted.
+- **Run what covers the change.** At every gate (phase commit, fix cycle, Gate 1, Stage 5) run the tests that cover the files the change touches: the tests that import, call or read a touched file, and the sample run or E2E that crosses the touched path. Do not run, or wait on, tests of code the change does not touch.
+- **The whole suite runs only when** the change touches something most tests depend on (shared fixtures, the test-runner config, a library the suite imports), or a touched file cannot be mapped to its tests (say so before the run), or the operator asks.
+- **A repo gate that runs every test on every commit or push is a fault in that repo.** Fix it to select by changed path (a path nothing maps runs everything). When a commit or push is due before the gate can be fixed, tell the operator the wait and what it buys before starting it; never bypass a hook. Push one ref per command: several refs in one push run the push hooks once per ref.
+- **Say it before you wait.** Before a test run or a push expected to take over 5 minutes, state what will run, how long, and how much of it covers the change. If most of it does not, fix the selection first.
+- **Old tests are deleted, not parked.** A test of code that has been removed or retired, or that the operator names as no longer wanted, is deleted; git history keeps it. A test is never deleted only because the agent does not recognise it: ask.

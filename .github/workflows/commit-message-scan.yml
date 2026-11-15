@@ -82,9 +82,9 @@ jobs:
             EXTRA_FLAGS=$(sed -e 's/#.*//' .github/secret-scan-flags | tr '\n' ' ')
             echo "Repo-declared secret-scan flags: $EXTRA_FLAGS"
           fi
-          # Pass --enforce-on-private so the scan runs even on private repos
-          # (the canonical script defaults to no-op on private; commit-message
-          # scanning is a defence-in-depth use case worth running everywhere).
+          # The commit-message scan runs on public repos only: on a private repo
+          # the script prints [SKIP] and exits 0, with or without
+          # --enforce-on-private (that flag reaches the file scan, not this one).
           # shellcheck disable=SC2086  # EXTRA_FLAGS is a flag list, must split
           python3 scripts/check-public-repo-secrets.py \
             --scan-commit-messages \

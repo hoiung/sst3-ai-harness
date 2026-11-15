@@ -159,8 +159,8 @@ MANUAL_SWEEP = (
 )
 OTHER_LANG_NOTE = (
     "sst3-test-vacuity: this gate parses Python only, so it proved nothing about the "
-    "non-Python file(s) above. Prove each another way (a shell test by its mutation "
-    "table) and record it as could-not-look, never as clean."
+    "non-Python file(s) above. Prove each another way (a shell test by one run that "
+    "fails when the check it tests is broken) and record it as could-not-look, never as clean."
 )
 
 def emit(file, line, kind, detail):

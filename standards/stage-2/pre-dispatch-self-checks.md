@@ -11,7 +11,7 @@
 > sibling `##` headings under a heading that said `(a)–(i)`, so an author who
 > read the heading as the whole catalogue would skip them.)
 
-- **(a) placeholder sweep** — `grep -E 'placeholder|stub|\bTODO\b|if needed|nice-to-have|could be|assumed|presumably|expected' /tmp/issue_draft_<topic>.md` → zero hits; re-run after every scope-reversal.
+- **(a) placeholder sweep** — `grep -E 'placeholder|stub|\bTODO\b|if needed|nice-to-have|could be|assumed|presumably|expected' /tmp/issue_draft_<topic>.md` → every hit reviewed: a gap placeholder is replaced with a concrete spec or an explicit out-of-scope line; text the issue template itself supplies and literal names (a stub server, an SDK string) stay; re-run after every scope-reversal.
 - **(b) scope-narrowing check** — every AC traces to the narrowed operator ask; an AC that does not map to the literal request is overreach — cut or justify.
 - **(c) min-v1 sketch** — confirm a minimum-viable-v1 sketch is present BEFORE research-driven extensions; label extensions v1.1 / v2 with deferral rationale.
 - **(d) template structure check** — `grep -nE '^### |^## ' $SST3/../templates/issue-template.md`; confirm each mandatory header is present in the draft. (dotfiles#552 AC 4.4: routed through the `$SST3` resolver instead of a bare literal path. `$SST3` ends at the scripts directory, so stepping up one level and into the sibling templates directory resolves in BOTH the nested canonical and the flattened mirror layout.)

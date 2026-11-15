@@ -86,13 +86,15 @@ if [[ "$EVENT" == "PostToolUse" ]]; then
   count="$(cd "$cwd" && bash "$COUNTER" --get </dev/null 2>"$errf")"; rc=$?
   first_err="$(head -n1 "$errf" 2>/dev/null)"; rm -f "$errf"
   if [[ $rc -eq 0 && "$count" =~ ^[0-9]+$ ]]; then
-    # The count alone cannot say what a FAIL now means: after --escalate it reads 0
-    # again, and the one loop canon then permits ends in a report, not a restart
-    # (ralph-review.md "Restart bound"). Before #577's escalation sweep this message
-    # told that loop to --restart. The escalation is read from the current stage's
-    # state field: --stage5 archives Stage 4's and opens a fresh loop. The path comes
-    # from a dry run, which never writes a state file; no file means no escalation.
-    bound="${SST3_RALPH_RESTART_BOUND:-3}"
+    # The count alone cannot say what a production fault now means: after --escalate
+    # it reads 0 again, and canon then permits no further fix cycle
+    # (ralph-review.md "Escalation: one Fable fix"). The escalation is read from the
+    # current stage's state field: --stage5 archives Stage 4's and opens a fresh limit.
+    # The path comes from a dry run, which never writes a state file; no file means
+    # no escalation. --get names the issue, worktree and key it read on stderr; that
+    # line goes into the message, because the key comes from the cwd and a count read
+    # from another Issue's key is otherwise reported as this one's.
+    bound="${SST3_RALPH_RESTART_BOUND:-2}"   # same default as sst3-ralph-restart-counter.sh BOUND
     state_path="$(cd "$cwd" && SST3_RALPH_COUNTER_DRYRUN=1 bash "$COUNTER" --print-state-path </dev/null 2>/dev/null)"
     esc="null"
     if [[ -n "$state_path" && -f "$state_path" ]]; then
@@ -100,15 +102,15 @@ if [[ "$EVENT" == "PostToolUse" ]]; then
       [[ -n "$esc" ]] || esc="unreadable"
     fi
     audit counter-reported "ralph_restarts=$count escalated=$esc"
-    head_msg="SST3 ralph-restart-counter: ralph_restarts=$count for this worktree (read via --get)"
+    head_msg="SST3 ralph-restart-counter: ralph_restarts=$count (${first_err:-read via --get})"
     if [[ "$esc" == "unreadable" ]]; then
-      sst3_hook_emit PostToolUse "$head_msg, but whether an escalation is recorded could not be read from $state_path, so what a FAIL means now is unknown. Read ~/.claude/hooks/sst3-ralph-restart-counter.sh --print-state-path before acting (standards/stage-4/ralph-review.md)."
+      sst3_hook_emit PostToolUse "$head_msg, but whether an escalation is recorded could not be read from $state_path, so what a production fault means now is unknown. Read ~/.claude/hooks/sst3-ralph-restart-counter.sh --print-state-path before acting (standards/stage-4/ralph-review.md)."
     elif [[ "$esc" != "null" ]]; then
-      sst3_hook_emit PostToolUse "$head_msg; an escalation is recorded (at restart $esc), so this is the ONE Ralph loop canon permits after it. A tier FAIL that changes shipped behaviour is TERMINAL: do NOT --restart and do NOT --escalate again. Stop and report every outstanding finding with its class, what was tried, and the ledger state to the operator (standards/stage-4/ralph-review.md)."
+      sst3_hook_emit PostToolUse "$head_msg; an escalation is recorded (at restart $esc): the one fix agent has run. A further PRODUCTION FAULT is TERMINAL: do NOT --restart and do NOT --escalate again. Stop and report every outstanding finding with its kind and what was tried to the operator (standards/stage-4/ralph-review.md)."
     elif (( count >= bound )); then
-      sst3_hook_emit PostToolUse "$head_msg: the restart bound ($bound) is reached. A tier FAIL that changes shipped behaviour does not restart: escalate once (bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --escalate, then ONE class-sweep), after which exactly ONE further Ralph loop is permitted (standards/stage-4/ralph-review.md)."
+      sst3_hook_emit PostToolUse "$head_msg: the fix-cycle limit ($bound) is reached. A further PRODUCTION FAULT is not a fix cycle: signal bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --escalate, dispatch the ONE ralph-fixer agent, then one Sonnet fix check; a FAIL there is stop-and-report (standards/stage-4/ralph-review.md)."
     else
-      sst3_hook_emit PostToolUse "$head_msg. A tier FAIL that changes shipped behaviour: fix it, signal bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --restart, and restart at Tier 1. Restart $((bound + 1)) is not taken: escalate with --escalate instead (standards/stage-4/ralph-review.md)."
+      sst3_hook_emit PostToolUse "$head_msg. Only a PRODUCTION FAULT (a wrong result for an input a real user or system can send) starts a fix cycle: fix it, run the test suite, signal bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --restart, dispatch ONE Sonnet fix check on the fix diff, then resume at the next tier. GAPs are fixed in place with no re-review; rare edge cases are recorded. After $bound fix cycles the next production fault goes to the fix agent via --escalate (standards/stage-4/ralph-review.md)."
     fi
   else
     audit counter-unavailable "rc=$rc ${first_err:-no stderr}"
@@ -155,7 +157,7 @@ if in_list "$ATYPE" "$REVIEW_AGENT_TYPES"; then
     fi
     hits="$(printf '%s\n' "$cmds" \
       | grep -oE '((^|[^0-9])>>?[[:space:]]*|(^|[^A-Za-z0-9_])tee[[:space:]]+(-a[[:space:]]+)?)["'"'"']?[A-Za-z0-9_./-]+\.(py|js|jsx|ts|tsx|sh|md|json|ya?ml|toml|rs|sql|cfg|ini)([^A-Za-z0-9]|$)' \
-      | awk '{ t = $0; sub(/^[^\/]*/, "", t); if (t ~ /^\/tmp\// && t !~ /\/\.\.(\/|$)/) next; print }' \
+      | awk -v home="$HOME" '{ t = $0; sub(/^[^\/]*/, "", t); if ((t ~ /^\/tmp\// || index(t, home "/handover/") == 1) && t !~ /\/\.\.(\/|$)/) next; print }' \
       | head -n5 | tr '\n' ' ')"
     if [[ -n "$hits" ]]; then
       audit write-bypass "$hits"

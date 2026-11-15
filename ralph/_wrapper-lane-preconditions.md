@@ -16,4 +16,4 @@ Every `bash $SST3/<script>` in the tier checklists is resolved in the same shell
 
 **AP #19 `mcp_graph_available` field rule (wrapper-lane epoch — Issue #445)**: every subagent RESULT block that discusses graph queries MUST include `mcp_graph_available: yes|no` as the first line. Under the wrapper-lane this field is **always `no`** — wrappers are bash-tool calls, not MCP-protocol calls; subagents do not inherit the bash-tool set the same way. Documented grep + manual-read fallback is the EXPECTED path, not a degradation. Ralph Tier 1 uses this field with documented-fallback evidence:
 - `mcp_graph_available: no` + grep / subagent fallback evidence = PASS (acceptable — documented fallback is the requirement)
-- `mcp_graph_available: no` + NO fallback evidence = FAIL (silent skip)
+- `mcp_graph_available: no` + NO fallback evidence = silent skip: the tier is re-dispatched

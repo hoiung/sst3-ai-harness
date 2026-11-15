@@ -121,3 +121,46 @@ def test_tool_writes_the_short_label_and_never_repeats_the_box(tmp_path, monkeyp
     assert f"- [x] {LONG_AC}" in written
     assert f"- **{pow_label(LONG_AC)}**: commit abc1234; test 2 passed" in written.splitlines()
     assert written.count(LONG_AC) == 1, "the box text was written into Proof of Work again"
+
+
+# dotfiles#582 AC 2.5: every reply names the repo actually read, and the not-found
+# reply lists near matches only (capped), with the total.
+def _stub_issue(tmp_path, monkeypatch, body: str) -> Path:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    gh = bindir / "gh"
+    gh.write_text(STUB_GH, encoding="utf-8")
+    gh.chmod(0o755)
+    body_file = tmp_path / "body.md"
+    body_file.write_text(body, encoding="utf-8")
+    log = tmp_path / "gh-edits.ndjson"
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("GH_STUB_BODY", str(body_file))
+    monkeypatch.setenv("GH_STUB_LOG", str(log))
+    return log
+
+
+def test_every_reply_names_the_repo_actually_read(tmp_path, monkeypatch):
+    _stub_issue(tmp_path, monkeypatch, "- [ ] alpha box\n- [x] beta box\n\n## Proof of Work\n\n")
+    listed = asyncio.run(server.get_issue_checkboxes(7))
+    assert f"{server.DEFAULT_REPO} Issue #7" in listed, listed
+    other = asyncio.run(server.get_issue_checkboxes(7, repo="someone/other"))
+    assert "someone/other Issue #7" in other, other
+    done = asyncio.run(server.update_issue_checkbox(7, "alpha box", "commit abc1234", repo="someone/other"))
+    assert done.startswith("SUCCESS") and "someone/other Issue #7" in done, done
+    again = asyncio.run(server.update_issue_checkbox(7, "beta box", "commit abc1234"))
+    assert again.startswith("ERROR: Checkbox already checked") and f"{server.DEFAULT_REPO} Issue #7" in again
+
+
+def test_not_found_lists_near_matches_only_capped_with_the_total(tmp_path, monkeypatch):
+    boxes = [f"- [ ] **AC 1.{i}** deliver part {i}" for i in range(1, 16)]
+    boxes += [f"- [ ] unrelated item {i}" for i in range(20)]
+    _stub_issue(tmp_path, monkeypatch, "\n".join(boxes) + "\n")
+    out = asyncio.run(server.update_issue_checkbox(7, "**AC 1.", "commit abc1234"))
+    assert out.startswith(f"ERROR: Checkbox not found in {server.DEFAULT_REPO} Issue #7"), out
+    assert "Near matches (10 of 15):" in out, out
+    assert sum(1 for line in out.splitlines() if line.startswith("  [ ] ")) == 10, out
+    assert "unrelated item" not in out, out
+    assert "35 checkboxes in total" in out, out
+    none = asyncio.run(server.update_issue_checkbox(7, "zzz no such box", "commit abc1234"))
+    assert "No near match." in none and "35 checkboxes in total" in none, none

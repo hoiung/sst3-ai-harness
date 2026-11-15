@@ -7,7 +7,7 @@ Stage-4 merge gate: a worktree-isolated remote FF push that touches NO shared wo
 ## Canonical procedure (dotfiles#488 AC 1.3)
 
 1. Ensure all work committed by exact pathspec (NEVER `git add -A`).
-2. Publish the solo branch: `git push origin <solo-branch>`.
+2. Publish the solo branch: `git push origin <solo-branch>` (skip when its tip is already on origin). One ref per push command: several refs in one push run the push hooks once per ref on the same commit.
 3. Server-side fast-forward: `git push origin <solo-branch>:master`.
 4. On non-fast-forward rejection (transient pre-push race): `git fetch origin master` then `git rebase origin/master` INSIDE the worktree, retry step 3. Bounded ≤3 attempts. **NEVER** `--force` / `--force-with-lease`.
 5. `ExitWorktree action:keep` until push confirmed landed (`git ls-remote origin master` == solo tip); then `ExitWorktree action:remove`; then `git push origin --delete <solo-branch>`; then `git fetch --prune`.

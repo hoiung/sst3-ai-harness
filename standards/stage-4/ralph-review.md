@@ -1,7 +1,9 @@
 <!-- stages: 4 -->
 # Ralph Review — Stage-4 Canonical
 
-Three-tier code-delivery verification: Haiku surface → Sonnet logic → Opus deep. Sequential (not parallel).
+Three-tier code-delivery verification: Haiku surface → Sonnet logic → Opus deep. Sequential (not parallel). One round: each tier reviews the whole diff ONCE.
+
+The bar: simple code that works reliably for the inputs that really arrive. Not coverage of every conceivable case.
 
 <!-- stages: 4 -->
 ## Tier sequence
@@ -9,7 +11,7 @@ Three-tier code-delivery verification: Haiku surface → Sonnet logic → Opus d
 | Tier | Model | Lens | Canonical checklist |
 |------|-------|------|---------------------|
 | 1    | `haiku`  | Surface — convention adherence, formatting, no-debug-leftovers | `../../ralph/haiku-review.md` |
-| 2    | `sonnet` | Logic — control flow, edge cases, contract adherence, test seam | `../../ralph/sonnet-review.md` |
+| 2    | `sonnet` | Logic — control flow, contract adherence, test seam | `../../ralph/sonnet-review.md` |
 | 3    | `opus`   | Deep — architecture, cross-cutting, governance drift, wrapper-vs-raw counter-query | `../../ralph/opus-review.md` |
 
 Dispatch every tier in the FOREGROUND: `Agent(subagent_type="ralph-review", model=<tier>, run_in_background: false, prompt=…)`. Subagents run in the background by default, and a background dispatch returns at launch with no result. The tier sequence needs each verdict before the next tier starts, and the PostToolUse `Agent` hook that hands the parent its `ralph_restarts` count only has a result to act on for a foreground dispatch.
@@ -24,9 +26,58 @@ The three checklists `_*.md` shared blocks live in `../../ralph/`:
 - `_fallback-clause.md` — retry-aware, evidence-required fallback clause.
 
 <!-- stages: 4 -->
-## On FAIL
+## The three kinds of finding
 
-Fix → restart from Tier 1 (NOT continue from failed tier). Restarts are bounded: after 3, escalate, then ONE further loop, then stop and report (below, "After the escalation"). **Round scoping (#567 — replaces the full re-review)**: cascade risk (a Sonnet fix re-breaking a Haiku check) is confirmed by **re-running the test suite** — mechanical, deterministic, seconds — NOT by re-dispatching LLM reviewers over the entire diff. The REVIEWERS in round N+1 are scoped to (a) commits since the previous round and (b) the class ledger's gates (run each enumerator; count drift = FAIL). Full re-review of the whole diff happens ONLY at escalation. Rationale, measured (`Issue #3`; figures sourced from the dotfiles#567 issue body, "Measured evidence" block — 87,296 + 82,222 + 143,972 + 208,901): under the unscoped rule round 9 still ran a full multi-dispatch re-review — 522,391 subagent tokens across four dispatches, ~174k per review-phase commit — while the cascade class it defended against is exactly what the suite catches for free.
+Every finding is exactly one kind. The reviewer proposes the kind; the main agent decides it, read fresh from this file, and writes one line of reason.
+
+| Kind | Test | Outcome |
+|------|------|---------|
+| PRODUCTION FAULT | Shipped code gives a wrong result for an input a real user or system can send. The finding names the input and the wrong result. | A fix cycle (below). |
+| GAP | Anything that does not change what a real input gets: a missing, weak or vacuous test of behaviour real inputs reach, a surviving mutant, doc drift, a checkbox or record gap, dead or duplicate code, a hardcoded value, a missing log line. A missing test for a RARE EDGE CASE is not a GAP: no test is built for it. | The main agent fixes it in place. The round continues. Nothing is re-reviewed. |
+| RARE EDGE CASE | Needs a chain of unlikely events, or an input no shipped path sends. | Recorded, not fixed: one line in the user-review-checklist §3 as `[edge-case: <why rare>]`. |
+
+- Only a PRODUCTION FAULT starts a fix cycle. A finding with no named input and wrong result is not a PRODUCTION FAULT.
+- A RARE EDGE CASE whose consequence is money loss, data loss or a security hole is a PRODUCTION FAULT.
+- A GAP fix must not change what a real input gets; the test suite confirms it. A repaired or new test that fails on shipped code is a PRODUCTION FAULT.
+- A PRODUCTION FAULT outside the diff (pre-existing) is fixed in this Issue as a fix cycle. A "pre-existing" or "unchanged" claim needs an executed before/after run at both tips (base and branch), output pasted.
+- <!-- c4:T65 --> A finding against a test-policing guard (a test whose subject is another test, not production code) is a GAP.
+- A finding about code the agent added in-loop that no AC asks for is recorded, not fixed in-loop.
+- A reviewer that skipped a required check (wrapper lane, run sentinel, counter-query) is re-dispatched. That is not a finding about the diff.
+
+<!-- stages: 4 -->
+## Fix cycle
+
+At most 2 fix cycles. The limit counts fix cycles, not faults.
+
+On a PRODUCTION FAULT:
+
+1. The main agent fixes every production fault in that tier's report, with one test that fails when the fix is reverted. Findings that share a root cause are fixed at the shared cause, by the widest correct generalisation the evidence supports, not symptom by symptom. <!-- c4:T06 --> The defect-class breaker: a second production fault of the same shape is fixed one level up (change the mechanism), never as another instance. <!-- c4:T70 --> A fix that adds a lock is deadlock-probed, before commit, against the implicit locks of every transaction it can meet. An accepted review suggestion is re-run against the defect it neighbours before it ships.
+2. Run the test suite until green: the tests that cover the files the fix touches, not every test in the repo (`../../standards/STANDARDS.md` "Which tests get built, and which get run"). Failures here belong to this cycle.
+3. Signal `bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --restart`, then dispatch ONE Sonnet reviewer on the fix diff only (`../../ralph/sonnet-review.md` "Fix check").
+4. Fix check PASS: the sequence resumes at the tier AFTER the one that found the fault, and that tier reviews the whole diff as in round 1. After an Opus fault, a passing fix check is Ralph PASS.
+5. A production fault found by the fix check starts the next fix cycle.
+
+A production fault found by Gate 1 after Ralph PASS is a fix cycle against the same limit. Other Gate-1 failures are GAPs fixed in place.
+
+<!-- stages: 4 -->
+## Escalation: one Fable fix
+
+A third production fault is NOT a third fix cycle. Signal `bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --escalate`, then dispatch ONE fix agent in the FOREGROUND, in the Issue's worktree: `Agent(subagent_type="ralph-fixer", run_in_background: false, prompt=…)` (`.claude/agents/ralph-fixer.md` sets model `fable`, effort `high`). Give it the Issue, the whole diff, and every earlier finding and fix. A session that started before the agent file was installed does not have the `ralph-fixer` type (agent types load at session start): there, dispatch `Agent(subagent_type="general-purpose", model="fable", effort="high")` and tell it to read `~/.claude/agents/ralph-fixer.md` first and follow it.
+
+- It finds the root cause, WRITES the fix and its test, and runs the tests. It is the only subagent in SST3 that writes code.
+- The main agent does not edit while it runs. Afterwards the main agent reads its diff, runs the test suite and commits per file.
+- Then ONE Sonnet fix check of that diff.
+- PASS: the remaining tiers run. Any further production fault is STOP.
+- FAIL, or the fix agent cannot be dispatched: STOP.
+
+**STOP is a report to the operator, never a silent abandon**: every outstanding finding with its kind, what was tried, and the question ship or fix. No class sweep, no second escalation, no further cycle.
+
+<!-- stages: 4 -->
+## Proof of a fix
+
+Default: one test that fails when the fix is reverted. Run it both ways and paste both results.
+
+Mutation tables and class ledgers (`mutation-verification.md`, `../../templates/class-ledger-template.md`) are opt-in: only for a guard protecting money, data loss, security or a customer-facing figure, or when the operator asks. Money = code that moves real money or places live orders; exploration, paper and lab code is not. Where a ledger exists, every tier RUNS its enumerators instead of re-deriving the class.
 
 <!-- stages: 4 -->
 ## On PASS (all 3)
@@ -34,9 +85,31 @@ Fix → restart from Tier 1 (NOT continue from failed tier). Restarts are bounde
 Proceed to Verification Loop (Gate 1). Ralph PASS verifies code DELIVERY against the Issue's Acceptance Criteria; it does NOT substitute for Stage 5 adversarial audit (TB-3 N36 — different lens, different class of findings).
 
 <!-- stages: 4 -->
+## Stage 5, rework, in-flight Issues
+
+- **Stage 5**: at the start of each Stage-5 round, inside the Stage-5 fix worktree (a `solo/issue-N-*` branch), signal `bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --stage5`. It opens a fresh limit of 2. A round is one audit pass and the fixes for its findings; after a STOP, no new round opens without the operator's word. Stage-5 audit findings use the same three kinds: production faults get fix cycles, GAPs are fixed in place, rare edge cases are recorded.
+- **Rework after a PASS**: an operator-requested change gets one fix check (test suite plus one Sonnet pass on the change diff). It does not use the limit.
+- **In-flight Issues**: an Issue mid-loop under the earlier rule switches at its next fix. Its count carries over; at 2 or more, the next production fault goes to the fix agent.
+
+<!-- stages: 4 -->
 ## Tier 3 wrapper-vs-raw counter-query
 
-When any Tier-3 finding depends on `sst3-code-*.sh` output, Opus MUST dispatch ≥1 raw-tool counter-query subagent on the same target before signing PASS and record the recall delta + reconciliation in its review comment; skipping it = Tier-3 FAIL.
+When any Tier-3 finding depends on `sst3-code-*.sh` output, Opus dispatches ≥1 raw-tool counter-query subagent on the same target before signing PASS and records the recall delta + reconciliation in its review comment. A skipped counter-query means Opus is re-dispatched.
+
+<!-- stages: 4 -->
+## Counter
+
+`claude/hooks/sst3-ralph-restart-counter.sh` OBSERVES; the main agent ENFORCES. No hook can redirect a dispatch. The counter cannot see a fix cycle or an escalation for itself (every tier dispatches under one agent type), so unsignalled the count stays 0.
+
+- `--restart` at each fix cycle. Bound: `SST3_RALPH_RESTART_BOUND`, default 2.
+- `--escalate` when the fix agent is dispatched. It is terminal: a `--restart` after it is a breach, reported as such.
+- `--stage5` at the start of each Stage-5 round.
+- `--get` for the checkpoint line `ralph_restarts: N` (N = fix cycles; the field name is parsed by scripts and stays).
+
+<!-- stages: 4 -->
+## Where this rule is restated (sweep them together, AP #24)
+
+`.claude/commands/Leader.md`, `.claude/commands/SST3-solo.md`, `CLAUDE.md` + `../../templates/CLAUDE_TEMPLATE.md` (and every consumer `CLAUDE.md`), `../../workflow/WORKFLOW.md`, `ralph/README.md` + the three tier checklists, `.claude/agents/ralph-review.md` + `.claude/agents/ralph-fixer.md`, `../../templates/{issue-template,chat-handover,leader-feedback-template,user-review-checklist}.md`, `../../standards/stage-4/per-stage-feedback-capture.md`, `../../standards/stage-5/post-implementation-review-procedure.md`, the messages in `claude/hooks/sst3-subagent-result-parser.sh` and `claude/hooks/sst3-ralph-restart-counter.sh`, the plugin copies (`.claude/plugin-staging/ralph-review-trio/`, `.claude/skills/design-fidelity/.claude-plugin/`) and the hand-pinned mirror copies named in `SST3/drift-manifest.json`. Changing the bound constant alone changes nothing an agent reads.
 
 <!-- stages: 4 -->
 ## Cross-references
@@ -44,31 +117,3 @@ When any Tier-3 finding depends on `sst3-code-*.sh` output, Opus MUST dispatch �
 - `.claude/commands/Leader.md` Stage 4 step 7 — the operator-facing Ralph trigger.
 - `../../ralph/{haiku,sonnet,opus}-review.md` — per-tier canonical checklists.
 - `../docs/research/model-selection-haiku-4-5.md` — model-selection rationale.
-
-<!-- stages: 4 -->
-## Restart bound, escalation, and terminal state (#567 — operator directive replaces the unbounded cycle)
-
-A Ralph ROUND is one dispatch of the tier sequence starting at Tier 1. A RESTART is a return to Tier 1 after a FAIL, so round N+1 begins with restart N.
-The bound counts RESTARTS, not rounds — that definition is UNCHANGED by #567 (only the bound's value and what follows it changed; the counter still measures the same thing).
-
-**Restarts 1 to 3**: on a tier FAIL that qualifies (see below), fix and restart from Tier 1.
-At the moment you restart, signal the counter: `bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --restart`. This is REQUIRED, not optional bookkeeping. The SubagentStop event stream cannot see a restart at all — every tier dispatches under the same agent type, so a restart and an ordinary tier event are indistinguishable in it. The counter therefore derives NOTHING from event volume: unsignalled, the count stays 0 no matter how many events arrive, and the bound is never observed to be reached. (This paragraph previously said the stream "under-reports by up to 5x", which described an event-inference model that was removed — there is no partial credit, only 0.)
-
-At fix time, on every restart: if a finding shares a root mechanism with an earlier finding in this issue, sweep the whole class before fixing.
-Fix by the widest correct generalisation the evidence supports, not by the observed symptom. Guard-by-symptom fixing is what serialises one class member per restart. An accepted review suggestion is re-run against the defect it neighbours before it ships: a reviewer's alternative fix is a new change, not a verified one. <!-- c4:T70 --> A fix that adds a lock is deadlock-probed, before commit, against the implicit locks of every transaction it can meet.
-A fix closing only the KNOWN instances of a class is rejected at Ralph: the fix must be an enumerator covering every member, proven by mutation, with the class recorded in the per-issue class ledger (opened at the first restart from `../../templates/class-ledger-template.md`). From then on every tier RUNS the ledger's enumerators instead of re-deriving the class; a ledgered class re-appearing means the enumerator is wrong: fix it, not another instance. When the Issue's subject is a defect class, sweep its own diff for that class before closure and re-run the detector on every artefact authored in the same session.
-
-Only a finding that changes SHIPPED BEHAVIOUR restarts the sequence. A finding confined to tests, comments, or documentation is fixed IN PLACE and the round CONTINUES to the next tier.
-A finding that invalidates the EVIDENCE for an acceptance criterion counts as shipped behaviour and DOES restart. A vacuous test, a gate that passes without checking, and a surviving mutant are all evidence-invalidating. <!-- c4:T65 --> Exception: a finding against a test-policing guard (a test whose subject is another test, not production code) never restarts, since no AC's evidence rests on it; it is fixed in place.
-
-**Loop-quality breakers.** <!-- c4:T06 --> (1) the defect-class breaker: two consecutive same-shape FAILs require a structural alternative (fix one level up, change the mechanism, or escalate) before a third same-shape fix. (2) Each round's dispatch names a distinct attack angle, and every finding records `reachable: yes/no` (by a shipped input) before it is scored a FAIL. (3) A finding about code the agent added in-loop that no AC asks for is recorded, not fixed in-loop. (4) Classify each finding against the restart rule read fresh from this file, never a handover-inherited label. (5) A "pre-existing" or "unchanged" claim about a finding needs an executed before/after run at both tips (base and branch), output pasted. A post-close checkpoint still discloses the Ralph status (Leader.md step 9).
-
-**Restart 4 is NOT taken. Escalate instead**: run ONE class-sweep, then resume Ralph with the restart count reset to zero.
-Effect that reset with `bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --escalate`, which is the ONLY thing that resets the count within a stage. At Stage-5 entry the main agent signals `bash ~/.claude/hooks/sst3-ralph-restart-counter.sh --stage5` once: it archives Stage 4's numbers under the same state key and opens Stage 5's own loop, so a scoped Stage-5 restart does not inherit Stage 4's terminal state. The counter is deliberately blind to the sweep's own subagents, so it cannot detect the escalation for itself; unsignalled, the count keeps climbing to 4, 5, 6 while this rule says 1 to 3 — wrong from the escalation onward.
-Deterministic enumeration is a permitted escalation method, PREFERRED where the class is mechanically enumerable; it does NOT replace the subagent fan-out, whose hunt-and-refute shape finds classes the sweep does not generate. The escalation, in either shape, has no agent-count bound (size it to the angles) and MUST record its agent count and token cost.
-The escalation MUST use and record a method DIFFERENT from those the issue's failed rounds tried (a mutation sweep counts as one); "different" binds against the issue's own failed attempts, and against a prior escalation only where the operator has authorised further loops past the terminal stop.
-The fan-out prompt shape is hunt and adversarial refute: parallel hunt angles enumerate the whole class in one pass, adversarial refuters try to find a survivor, and closure is declared only on an empty survivor set. Every new guard is mutation-verified — spec and sweep quality gates (declared classes, generator blind spots, `--self-test`, coupling-only exclusion, residual rules): `mutation-verification.md` (the single canonical; this sentence is the escalation's working copy).
-
-**After the escalation, exactly ONE further Ralph loop is permitted. If that loop does not reach PASS, the loop STOPS — this is a TERMINAL STATE.** The stop is a REPORT, never a silent abandon: list every outstanding finding with its class, what was tried, and the ledger state, so the operator rules on ship-vs-fix. Do NOT take a further restart, do NOT run a second escalation — the sequence is: up to 3 restarts → one escalation → one Ralph loop → PASS or stop-and-report.
-
-**The counter OBSERVES; the main agent ENFORCES (#567 AC 5.6).** No hook can redirect a dispatch. The bound's MECHANISM constant (`claude/hooks/sst3-ralph-restart-counter.sh` `SST3_RALPH_RESTART_BOUND`, default 3) only keeps the telemetry honest — changing the constant alone changes NOTHING an agent reads. This prose, and its propagated copies, are the load-bearing deliverable; a future editor must not "fix" the bound by editing the constant alone, nor by editing this file alone (the bound is restated across Leader.md / SST3-solo.md / the dotfiles CLAUDE.md + CLAUDE_TEMPLATE.md / ralph/README.md / issue-template.md / the ralph-review-trio AND design-fidelity plugin copies incl. their README + marketplace.json / the drift-manifest.json divergent-pin notes + every consumer CLAUDE.md — sweep them together, AP #24).

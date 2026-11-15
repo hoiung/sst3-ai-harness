@@ -60,7 +60,7 @@ Most agent frameworks focus on "how do I chain prompts" or "how do I assign task
 
 ### One main orchestrator agent writes. Subagents are PLANNING ONLY.
 
-The main orchestrator agent is the single writer. It holds full context, makes the calls, writes every line of code, and owns every commit. Subagents are dispatched in parallel to research, explore, audit, and review. They read, analyse, and report findings back. **They never write code.** This separation is load-bearing:
+The main orchestrator agent is the single writer. It holds full context, makes the calls, writes every line of code, and owns every commit. Subagents are dispatched in parallel to research, explore, audit, and review. They read, analyse, and report findings back. **They never write code** (one exception: the single fix agent the Ralph loop escalates to). This separation is load-bearing:
 
 - The orchestrator keeps a coherent mental model across the whole issue without context pollution from parallel edits.
 - Subagents get narrow, focused prompts on specific questions (review a directory, verify a claim, audit against a standard) and cheaper models (Haiku, Sonnet) can be used without risking production code quality.
@@ -99,7 +99,7 @@ Only then does Ralph run. Reviewer time is precious. Don't waste it on things th
 
 ### Ralph Review: three models, increasing depth
 
-Named after Ralph Wiggum (if Ralph can spot it, it's really wrong). Haiku handles surface checks (missing files, debug prints, naming). Sonnet traces logic (null propagation, scope drift, silent fallbacks). Opus audits architecture (wiring across modules, contract mismatches, overengineering). Any tier emits a machine-readable PASS token or the loop restarts from Haiku with the fixes applied — up to 3 restarts, then ONE escalation to a class sweep, then ONE final loop; if that loop does not pass, the loop STOPS and reports the outstanding findings (terminal state, never a silent abandon). No shortcuts. No "looks good to me" without evidence.
+Named after Ralph Wiggum (if Ralph can spot it, it's really wrong). Haiku handles surface checks (missing files, debug prints, naming). Sonnet traces logic (null propagation, scope drift, silent fallbacks). Opus audits architecture (wiring across modules, contract mismatches, overengineering). Each tier emits a machine-readable PASS token, and fails only on a production fault: shipped code gives a wrong result for an input a real user or system can send. The fix gets one Sonnet fix check and the sequence resumes at the next tier — at most 2 fix cycles, then ONE fix agent on the strongest model available; if its fix does not pass, the loop STOPS and reports the outstanding findings (terminal state, never a silent abandon). Test, doc and record gaps are fixed in place with no re-review. No shortcuts. No "looks good to me" without evidence.
 
 ### Branch safety, commit-per-file, direct merge after Ralph
 
@@ -219,7 +219,7 @@ Ralph is a 3-tier automated quality review system. Every merge requires all thre
 | **2. Sonnet** | Claude Sonnet | Logic checks | Silent fallbacks, scope drift, duplicate modules, dead code |
 | **3. Opus** | Claude Opus | Architecture | Overengineering, standard violations, contract mismatches, design flaws |
 
-Each tier outputs a machine-readable token (`HAIKU_PASS`, `SONNET_PASS`, `OPUS_PASS`). If any tier fails, the main orchestrator agent fixes the issues and restarts from Tier 1 — up to 3 restarts, then ONE escalation to a class sweep, then ONE final loop, then a terminal stop-and-report. This creates a **responsible AI** feedback loop. Quality is enforced automatically, not by honour system.
+Each tier outputs a machine-readable token (`HAIKU_PASS`, `SONNET_PASS`, `OPUS_PASS`). A tier fails only on a production fault. The main orchestrator agent fixes it, one Sonnet fix check reviews the fix, and the sequence resumes at the next tier — at most 2 fix cycles, then ONE fix agent, then a terminal stop-and-report. This creates a **responsible AI** feedback loop. Quality is enforced automatically, not by honour system.
 
 ### What Ralph Catches (The 5 Common Culprits)
 

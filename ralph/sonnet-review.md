@@ -2,9 +2,11 @@
 
 > **PLANNING MODE ONLY**: You are a REVIEWER. Do NOT write code, do NOT edit files, do NOT make commits. Your ONLY job is to verify and report findings. **Reviewer Isolation (#555 Phase 3):** any formatter/linter you invoke MUST run in its read-only check form (`cargo fmt -- --check`, `ruff format --check` — never the mutating form), and you must NEVER run a mutating git op (merge/checkout/stash/rebase/reset) — inspect the worktree read-only, so a review pass can never pollute the main agent's Gate-2 index.
 >
+> **Scoring (canonical: `../standards/stage-4/ralph-review.md` "The three kinds of finding"):** a checklist line marked FAIL means that item is not met. Report each unmet item as a finding with its kind: PRODUCTION FAULT (name the input a real user or system sends and the wrong result), GAP, or RARE EDGE CASE. The TIER verdict is FAIL only when a PRODUCTION FAULT stands; with only GAPs and RARE EDGE CASEs it is PASS, each listed with its kind. A check you could not run (engine missing, sentinel absent) is reported as could-not-look, never as a pass. The bar is simple code that works reliably for the inputs that really arrive.
+>
 > **STEP-0 tree-lock (MANDATORY first action):** subagents START in the main clone, which is a DIFFERENT, stale tree from the implementing agent's worktree — a review run there returns a false verdict against the wrong code. Before ANY check: run `git rev-parse --show-toplevel`, paste its output in your RESULT block, and confirm it matches the worktree path the dispatcher named; prefix every shell command with `cd <worktree> && `; verify the dispatcher-supplied tree FINGERPRINT (a file- or test-count true only in the worktree) and STOP with verdict FAIL "wrong tree" on any mismatch. A dispatch prompt that names no worktree path or fingerprint is itself a finding.
 >
-> **Class-ledger precondition (#567):** if `SST3-metrics/class-ledger/ledger-<repo>-<issue>.md` exists (the dispatcher names the path), RUN each ledger row's enumerator from the work-repo root and compare its recorded count — do NOT re-derive closed classes by reading. Count drift = FAIL (the enumerator is wrong or the class re-opened). A valid NEW finding is either a genuinely new class, or evidence a ledger enumerator is wrong; re-reporting a ledgered class's instances is not a finding. Canonical: `standards/stage-4/ralph-review.md` + `standards/stage-4/mutation-verification.md`.
+> **Class-ledger precondition (opt-in ledgers only):** if `SST3-metrics/class-ledger/ledger-<repo>-<issue>.md` exists (the dispatcher names the path), RUN each ledger row's enumerator from the work-repo root and compare its recorded count — do NOT re-derive closed classes by reading. Count drift = FAIL (the enumerator is wrong or the class re-opened). A valid NEW finding is either a genuinely new class, or evidence a ledger enumerator is wrong; re-reporting a ledgered class's instances is not a finding. Canonical: `../standards/stage-4/ralph-review.md` + `standards/stage-4/mutation-verification.md`.
 
 Medium-depth logic validation.
 
@@ -116,21 +118,31 @@ Medium-depth logic validation.
 
 ### Break-one-claim — the job enumeration cannot do (#567 Phase 6)
 
-> A mutation sweep answers only for classes someone enumerated (`mutation-verification.md`). This angle is the complement: handed ONE claim, break it. Both classes the `Issue #3` sweep missed (transposition, sign flip) came from exactly this prompt shape — not from a general "review this diff" pass.
+> Handed ONE claim, break it. One claim per dispatch — this is not a general re-review.
 
-- [ ] Pick ONE load-bearing claim in the diff (a figure, a gate's coverage statement, a sweep headline) and try to BREAK it: name a mutation class the gates/sweep do NOT generate (sign, order, unit, transposition, magnitude scale, vocabulary widening). Report either a class that survives with a concrete mutant, or the classes tried and the evidence each is covered. One claim per dispatch — this is not a general re-review.
+- [ ] Pick ONE load-bearing claim in the diff (a figure, a stated behaviour, a gate's coverage statement) and try to BREAK it with an input a real user or system can send. Report the input and the wrong result (a PRODUCTION FAULT), or the inputs tried and the result of each. Where an opt-in mutation sweep exists (`mutation-verification.md`), also name one class it does not generate (sign, order, unit, transposition, magnitude scale).
+
+## Fix check
+
+> Used INSTEAD of the checklist above when the dispatcher names "Fix check" (a fix cycle, the escalation fix, or an operator-requested change after a PASS; canonical: `../standards/stage-4/ralph-review.md` "Fix cycle"). Scope: the fix diff only (the commits the dispatcher names). STEP-0 tree-lock and the scoring rule above still apply.
+
+- [ ] The named fault is gone: run the fix's test with the fix in place (green), and confirm from the pasted evidence or your own run that it fails when the fix is reverted.
+- [ ] The test suite the dispatcher names is green on the fix commit.
+- [ ] The fix diff itself introduces no PRODUCTION FAULT (name the input and the wrong result) and does not undo what the Issue's Acceptance Criteria delivered.
+
+Output `<promise>FIX_CHECK_PASS</promise>` when all three hold, with any GAP or RARE EDGE CASE listed. Otherwise list each PRODUCTION FAULT; do not output the promise.
 
 ## Pass Criteria
 
-ALL checkboxes above verified with evidence (wrapper-lane + source spot-check, OR documented fallback + subagent RESULT block per `_fallback-clause.md`). Wrapper-lane available + not used for a structural question = FAIL. Doc-only PR exempted per `_doc-only-exemption.md` = PASS. Unavailable / stale / unsupported-language WITH subagent-backed fallback evidence = PASS.
+Every checkbox above was run with evidence (wrapper-lane + source spot-check, OR documented fallback + subagent RESULT block per `_fallback-clause.md`) and no PRODUCTION FAULT stands. Unmet items are listed as GAP or RARE EDGE CASE. Wrapper-lane available + not used for a structural question means this tier is re-dispatched. Doc-only PR exempted per `_doc-only-exemption.md` = PASS. Unavailable / stale / unsupported-language WITH subagent-backed fallback evidence = PASS.
 
 ## On Pass
 
-Output: `<promise>SONNET_PASS</promise>`
+Output: `<promise>SONNET_PASS</promise>`, then every GAP and RARE EDGE CASE with its kind.
 
 ## On Fail
 
 1. List failed items with evidence of failure
 2. Specify which Fail Fast/Registry violation found
 3. Do NOT output promise
-4. The main agent fixes and restarts from Tier 1 — bounded: up to 3 restarts, one escalation, then ONE further loop; a FAIL in that loop is stop-and-report, not another iteration
+4. The main agent runs a fix cycle (fix, test suite, one Sonnet fix check) and the sequence resumes at the next tier — at most 2 fix cycles, then one fix agent, then stop-and-report (canonical: `../standards/stage-4/ralph-review.md`)

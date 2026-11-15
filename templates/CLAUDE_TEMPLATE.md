@@ -26,6 +26,7 @@
 - **AP #17 Keep Going Until Done**: do NOT stop mid-work to ask permission, wait for user confirmation, or "check in". Phase checkpoints post a comment to the Issue and CONTINUE. Stop ONLY for: (a) context approaching ~50% remaining (~500K of 1M / ~100K of 200K) — on long/multi-phase work the agent AUTO-runs `/handover` + compact + CONTINUE (does not wait for the operator); never operate below 50% remaining; near-completion exemption: ~2-3 turns from done at ~51% → finish, (b) irreversible destructive action needing user consent (force-push, rm -rf, DROP TABLE, branch deletion), (c) genuinely stuck after investigation (not a first-response-to-friction reflex), (d) task complete. Compaction is a CONTINUATION mechanism, not premature stopping.
 - **AP #16 Monitor, Don't Fire-and-Forget**: every script / command / subprocess / test / deployment / commit / push you launch must be verified end-to-end (tail logs, check exit code, verify output, confirm side effects). "Started" is not "done". For `run_in_background`, use Monitor or read its output file. Be the user's eyes and ears, not just their executioner. If you cannot answer "what happened?" with specifics, you fired and forgot — go check NOW.
 - **AP #18 Sample Invocation Validates Workflow**: for any change touching pipeline / data-processing / orchestration / CLI-wiring / cross-module function-arg propagation — run an actual end-to-end sample invocation (real CLI, real DB, small liquid basket 8 items) BEFORE closing. Unit + smoke tests are necessary but NOT sufficient. Mocks that accept `**kwargs` silently discard params and do NOT prove propagation — assert `call_args.kwargs[...]` explicitly. Stage 4 Verification Loop mandatory gate. See STANDARDS.md "Testing Priority — Workflow Validation Gate".
+- **Test only what the change touches** (operator rule 2026-11-15; canonical: STANDARDS.md "Which tests get built, and which get run"): build tests for what real inputs do, none for a rare edge case that poses no production risk; at every gate run and wait on only the tests that cover the files the change touches, never the whole repo for a change that touches part of it. The whole suite runs only when the change touches something most tests depend on, or the operator asks. A repo gate that runs every test on every commit or push is a fault to fix. Before a test run or push of over 5 minutes, say what will run, how long, and how much of it covers the change. One ref per push.
 
 **STOP if**: No GitHub Issue exists. Create Issue using `templates/issue-template.md`.
 
@@ -65,15 +66,15 @@ See: `reference/research-reference-guide.md` for complete guide
 
 ## Quality Standards
 
-**See STANDARDS.md** — Never Assume (read source before concluding), Fix Everything (no scope/language excuses, no priority deferrals), Critical Thinking (challenge with evidence). Only valid skip reason: confirmed false positive (document why).
+**See STANDARDS.md** — Never Assume (read source before concluding), Fix Everything (no scope/language excuses, no priority deferrals), Critical Thinking (challenge with evidence). Only valid skip reasons: a confirmed false positive (document why), or a RARE EDGE CASE recorded per the Ralph rule below.
 
 **Voice Content Protection** (optional, opt in per project): when editing voice-sensitive prose (CV, LinkedIn, cover letters, blogs, marketing copy), wrap new prose in voice-guard markers your team uses so pre-commit and CI can scan only tagged regions. Canonical rules in `standards/STANDARDS.md` "Voice Content Protection" + AP #15. The reference implementation (a `voice_rules.py` banned-word list + a marker-driven scanner) is operator-specific and not shipped in this public mirror — adapt the pattern to your own voice and wire it into your pre-commit/CI.
 
 ## Ralph Review Loop (MANDATORY)
 
-**Subagents are PLANNING ONLY** - they review, they do NOT write code.
+**Subagents are PLANNING ONLY** - they review, they do NOT write code. The one exception: the Ralph escalation fix agent.
 
-**Flow**: Implement → Haiku → Sonnet → Opus (up to 3 restarts, then ONE escalation, then ONE final loop, then stop-and-report) → **Merge to main** → User Review
+**Flow**: Implement → Haiku → Sonnet → Opus (at most 2 fix cycles, then ONE fix agent, then stop-and-report) → Verification Loop → **Merge to main** → User Review
 
 | Tier | Model | Purpose | Invocation |
 |------|-------|---------|------------|
@@ -81,8 +82,8 @@ See: `reference/research-reference-guide.md` for complete guide
 | 2 | `sonnet` (MANDATORY) | Logic checks | `Agent(model=sonnet, run_in_background=false, prompt="Review per SST3/ralph/sonnet-review.md...")` |
 | 3 | `opus` (MANDATORY) | Deep analysis | `Agent(model=opus, run_in_background=false, prompt="Review per SST3/ralph/opus-review.md...")` |
 
-**On FAIL any tier**: Main agent fixes → Restart from Tier 1 (Haiku), up to 3 restarts. Restart 4: NOT taken — escalate to a class-sweep Workflow, then resume Ralph with the count reset to zero for exactly ONE further loop; if that loop does not PASS, STOP and report the outstanding findings + classes to the operator (terminal state — never a silent abandon).
-**On PASS all 3**: Merge to main immediately (protects work), then user review
+**On FAIL any tier** (a tier FAILs only on a PRODUCTION FAULT: shipped code gives a wrong result for an input a real user or system can send): Main agent fixes → test suite → ONE Sonnet fix check on the fix diff → resume at the NEXT tier; at most 2 fix cycles. A third production fault escalates to ONE fix agent with write access on the strongest model available (Fable where offered) — the only subagent that writes code — then one Sonnet fix check; if that does not PASS, STOP and report the outstanding findings to the operator (terminal state — never a silent abandon). Test, doc and record GAPs are fixed in place with no re-review; RARE EDGE CASEs are recorded, not fixed (unless money loss, data loss or a security hole). Canonical: `standards/stage-4/ralph-review.md`.
+**On PASS all 3**: Verification Loop (Gate 1), then merge to main (protects work), then user review
 
 **Checklists**: `ralph/`
 

@@ -7,11 +7,11 @@ Automated 3-tier quality review for SST3 workflow.
 > - **DO**: Read files, verify evidence, check compliance, report findings
 > - **DO NOT**: Write code, edit files, make commits, fix issues
 >
-> If issues found, subagent reports findings → Main agent fixes → Restart review (up to 3 restarts, then ONE escalation, then ONE final loop, then stop-and-report).
+> If a production fault is found, the subagent reports it → the main agent runs a fix cycle (at most 2 fix cycles, then one fix agent, then stop-and-report). The one exception to "reviewers never write" is that escalation fix agent (`ralph-fixer`).
 
 ## What
 
-Main agent spawns 3 review subagents in sequence; the LOOP as a whole is bounded at 3 restarts, then ONE escalation, then ONE final loop, then a terminal stop-and-report:
+Main agent spawns 3 review subagents in sequence, each reviewing the whole diff once; fixes are bounded at 2 fix cycles, then ONE fix agent, then a terminal stop-and-report:
 - **Tier 1 (Haiku)**: Surface checks - files, checkboxes, commits
 - **Tier 2 (Sonnet)**: Logic checks - evidence, scope, fallbacks
 - **Tier 3 (Opus)**: Deep checks - architecture, standards, review
@@ -55,9 +55,10 @@ A background dispatch returns at launch with no verdict, and each tier needs the
 3. Haiku PASS → dispatches Sonnet
 4. Sonnet PASS → dispatches Opus
 5. Opus PASS → Verification Loop (Gate 1), then merge, then user review
-6. If ANY FAIL → Main agent fixes → Restart from Haiku (restarts 1-3; restart 4 is NOT taken — escalate, then ONE further loop, then stop-and-report)
+6. A tier FAILs only on a PRODUCTION FAULT (shipped code gives a wrong result for an input a real user or system can send). Then: fix → test suite → ONE Sonnet fix check on the fix diff → the sequence resumes at the NEXT tier.
+7. GAPs (tests, docs, records, hygiene) are fixed in place with no re-review. RARE EDGE CASEs are recorded, not fixed.
 
-**Max iterations**: the loop is bounded at 3 restarts, then escalates to a class-sweep and resumes for exactly ONE further loop; if that loop does not PASS, it STOPS and reports the outstanding findings + classes to the operator (terminal state, #567). The bound counts RESTARTS, not rounds. **The counter cannot observe either boundary for itself** — signal it: `sst3-ralph-restart-counter.sh --restart` at each restart, `--escalate` at the escalation (the only reset within a stage), `--stage5` once at Stage-5 entry (Stage 5's own loop; Stage 4's numbers are archived). Unsignalled the count stays 0 at any event volume, so the bound is never reached. See standards/stage-4/ralph-review.md for the canonical rule.
+**Max iterations**: the loop is bounded at 2 fix cycles. A third production fault goes to ONE fix agent (`ralph-fixer`: Fable, high effort) that reviews and writes the fix, followed by one Sonnet fix check; if that does not PASS, the loop STOPS and reports the outstanding findings to the operator (terminal state). The bound counts fix cycles, not faults. **The counter cannot observe either boundary for itself** — signal it: `sst3-ralph-restart-counter.sh --restart` at each fix cycle, `--escalate` when the fix agent is dispatched, `--stage5` at the start of each Stage-5 round (Stage 5 has its own limit of 2). Unsignalled the count stays 0 at any event volume. See standards/stage-4/ralph-review.md for the canonical rule.
 
 ## Learn
 

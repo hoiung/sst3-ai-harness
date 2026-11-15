@@ -19,6 +19,8 @@ Thumbs.db
 SST3-metrics/
 leader-feedback/
 feedback-*.md
+# This reference doc is part of the harness; the name pattern above would hide it.
+!reference/feedback-closure-loop-formats.md
 .tier-a-auto-tick/
 .feedback-aggregate-index.md
 feedback-index.ndjson

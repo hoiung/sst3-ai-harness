@@ -170,6 +170,13 @@ _PARSED_TYPES = frozenset({"user", "queue-operation"})
 #               sessionId, type}. Identifiers only, no free-text field.
 #   continued-in   keys exactly {continuedInSessionId, sessionId, timestamp, type}: the id of
 #               the session a compacted one carries on in. No free-text field.
+#
+# Re-derived 2026-11-21 (a Stage-3 extraction: the tool exited 3 on that session):
+#   data-flow-records  2,157 records in one session, keys exactly {records, sessionId,
+#               snapshot, type, v}; `records` holds {tool_name, event_id} provenance pairs
+#               for tool events. No free-text field.
+#   derived-from   keys exactly {sessionId, sessions, type, v}; `sessions` lists the sessions
+#               this one descends from (`via: compact`). No free-text field.
 _KNOWN_IGNORED = frozenset({
     "agent-name",
     "ai-title",
@@ -183,6 +190,8 @@ _KNOWN_IGNORED = frozenset({
     "continued-in",
     "cost-state",
     "custom-title",
+    "data-flow-records",
+    "derived-from",
     "file-history-delta",
     "file-history-snapshot",
     "history-suppression",

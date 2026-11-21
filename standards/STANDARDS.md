@@ -1026,9 +1026,9 @@ all (#565).
 
 - Files at DevProjects/ root
 - Folders not matching allowed criteria
-- A `scaffold`-shaped repo that has grown a dependency manifest or a source
-  root — `_SHAPE_SEC_DEP['scaffold']` is `(False, False)`, so both audit lanes
-  report clean without running until `_REPO_SHAPE` is re-pointed
+- A repo on a `POLICED_SHAPES` shape (scaffold, voice-doc, idea-repo, business-ops)
+  that has grown a dependency manifest or a source root — `_SHAPE_SEC_DEP` is `(False,
+  False)` for each, so both lanes report clean unrun until `_REPO_SHAPE` is re-pointed
 - A probed clone absent from disk, or a root holding none of them — a repo the
   hook never opened cannot support its "DevProjects is clean" claim, so it
   reports `PROBE_FAILED` rather than skipping silently. "Probed" is role-scoped

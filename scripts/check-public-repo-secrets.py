@@ -517,7 +517,12 @@ SCAN_EXTENSIONS: List[str] = [
     # scripts/social-cards/ are the literal text burned onto publicly-served
     # 1200x630 PNGs, so anything pasted into a row ships as an image on the
     # site. Without this suffix the guard never opened them (hoiboy-uk#56).
+    # Comma-separated files and saved emails: a login list kept as .csv or a
+    # captured alert email (.eml) holding a `password=...` line was never
+    # opened. A bare password cell in a CSV column is NOT caught: such a file's
+    # guard is living outside the repo plus a .gitignore line.
     ".tsv",
+    ".csv", ".eml",
     # Go source + module file, SQL migrations and systemd units. groupwarden#1
     # is a public Go service: without these its code, its schema and its deploy
     # units were never opened, so a token pasted into a test fixture or a unit's

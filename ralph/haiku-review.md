@@ -17,6 +17,7 @@ Fast surface validation.
 ### File Structure / Checkboxes / Commits / Debug Code
 - [ ] All new files in correct locations per STANDARDS.md; named per conventions; no temp files (`temp/`, `C:/temp/`, `$SST3_TEMP/`, `*.tmp`, `*.bak`)
 - [ ] All "Expected Behavior" + "Acceptance Criteria" checkboxes have evidence; no unchecked mandatory checkboxes
+- [ ] A change a person sees rendered (a page, HTML email, print PDF, social card) cites a picture of every touched page at each declared viewport (the repo's `.design-fidelity.json` `viewports`; default desktop 1440 + phone 390; a fixed-size output at its true size), each PNG path on disk (`ls -l <path>`); a missing picture is a GAP (rule: STANDARDS.md "Three-Tier Testing Framework" Run procedure step 3; gate: `claude/hooks/sst3-page-review.sh`; dotfiles#583)
 - [ ] All commits on current solo branch reference issue number (#X); format `type: description (#issue)`; no WIP/temp commits
 - [ ] No `console.log`, `print()` debug statements, debug flags enabled, or commented-out old code
 - [ ] Linter documented in CLAUDE.md (ruff / shellcheck / etc.) runs clean on the diff (sub-30s) (AC 5.4)

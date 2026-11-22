@@ -6,7 +6,7 @@ Final Stage-4 gate. Runs AFTER Gate 2 merge lands on origin/master. Uses the `..
 <!-- stages: 4 -->
 ## Canonical procedure
 
-1. Read `../../templates/user-review-checklist.md`. Use the TEMPLATE — do NOT invent your own. <!-- c4:T10 --> Before filling it, re-run every AC's own verify on the final merged tree (`origin/<default>` after Gate 2 lands) and paste each result.
+1. Read `../../templates/user-review-checklist.md`. Use the TEMPLATE — do NOT invent your own. <!-- c4:T10 --> Before filling it, re-run every AC's own verify on the final merged tree (`origin/<default>` after Gate 2 lands) and paste each result. For a change a person sees rendered, picture every touched page on the merged or live build at each declared viewport (the repo's `.design-fidelity.json` `viewports`; default desktop 1440 + phone 390; a fixed-size output at its true size), Read each and list the PNG paths with what each showed (STANDARDS.md "Three-Tier Testing Framework" Run procedure step 3; `claude/hooks/sst3-page-review.sh`; dotfiles#583).
 2. Fill ALL 10 sections. None are optional:
    - Scope Verification
    - Context Checkpoint

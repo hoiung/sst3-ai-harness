@@ -177,6 +177,10 @@ _PARSED_TYPES = frozenset({"user", "queue-operation"})
 #               for tool events. No free-text field.
 #   derived-from   keys exactly {sessionId, sessions, type, v}; `sessions` lists the sessions
 #               this one descends from (`via: compact`). No free-text field.
+#
+# Re-derived 2026-11-22 (dotfiles#583 Stage 3: the tool exited 3 on that session):
+#   data-flow-incomplete  6 records in 5 of 15 transcripts, keys exactly {codes, sessionId,
+#               type, v}; `codes` is a list of ints ([9], [9, 17]). No free-text field.
 _KNOWN_IGNORED = frozenset({
     "agent-name",
     "ai-title",
@@ -190,6 +194,7 @@ _KNOWN_IGNORED = frozenset({
     "continued-in",
     "cost-state",
     "custom-title",
+    "data-flow-incomplete",
     "data-flow-records",
     "derived-from",
     "file-history-delta",

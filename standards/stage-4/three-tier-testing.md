@@ -10,7 +10,7 @@ BUILD-vs-USE testing model: the canonical (BUILD) requires all 3 tiers to EXIST;
 |------|-------|----------------|
 | Unit     | Single function / class / module | Every change. |
 | Workflow | Cross-module CLI invocation / state propagation | Every change — AP #18 real-CLI sample when the change touches CLI / pipeline / SL1 / SL2 / cross-module function-arg propagation; else its workflow/integration coverage. |
-| E2E      | Real-system end-to-end against real DB / real services | Every change, sized to scope — full real-system when the change affects entire system / persistence / live-trade safety; else a small backtest or an actual execution change + cleanup. |
+| E2E      | Real-system end-to-end against real DB / real services | Every change, sized to scope — full real-system when the change affects entire system / persistence / live-trade safety; else a small backtest or an actual execution change + cleanup. A change a person sees rendered includes a picture of every touched page at each declared viewport (the repo's `.design-fidelity.json` `viewports`; default desktop 1440 + phone 390; a fixed-size output at its true size), each read (STANDARDS.md "Three-Tier Testing Framework" Run procedure step 3; `claude/hooks/sst3-page-review.sh`; dotfiles#583). |
 
 <!-- stages: 4 -->
 ## BUILD vs USE

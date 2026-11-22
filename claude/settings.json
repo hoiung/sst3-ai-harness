@@ -49,6 +49,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/sst3-canonical-sync-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-page-review.sh bash"
           }
         ]
       }
@@ -60,6 +64,24 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/sst3-subagent-result-parser.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-page-review.sh edit"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-page-review.sh read"
           }
         ]
       }
@@ -79,6 +101,17 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/sst3-ralph-restart-counter.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/sst3-page-review.sh stop",
+            "timeout": 30
           }
         ]
       }

@@ -32,8 +32,8 @@ Every finding is exactly one kind. The reviewer proposes the kind; the main agen
 
 | Kind | Test | Outcome |
 |------|------|---------|
-| PRODUCTION FAULT | Shipped code gives a wrong result for an input a real user or system can send. The finding names the input and the wrong result. | A fix cycle (below). |
-| GAP | Anything that does not change what a real input gets: a missing, weak or vacuous test of behaviour real inputs reach, a surviving mutant, doc drift, a checkbox or record gap, dead or duplicate code, a hardcoded value, a missing log line. A missing test for a RARE EDGE CASE is not a GAP: no test is built for it. | The main agent fixes it in place. The round continues. Nothing is re-reviewed. |
+| PRODUCTION FAULT | Shipped code gives a wrong result for an input a real user or system can send. The finding names the input and the wrong result. A visible cut, overlap or wrong sum on a shipped page is one: its input is the page and viewport (dotfiles#583). | A fix cycle (below). |
+| GAP | Anything that does not change what a real input gets: a missing, weak or vacuous test of behaviour real inputs reach, a surviving mutant, doc drift, a checkbox or record gap, dead or duplicate code, a hardcoded value, a missing log line, a rendered page's missing or unread pictures at each declared viewport (STANDARDS.md "Three-Tier Testing Framework" Run procedure step 3; `claude/hooks/sst3-page-review.sh`). A missing test for a RARE EDGE CASE is not a GAP: no test is built for it. | The main agent fixes it in place. The round continues. Nothing is re-reviewed. |
 | RARE EDGE CASE | Needs a chain of unlikely events, or an input no shipped path sends. | Recorded, not fixed: one line in the user-review-checklist §3 as `[edge-case: <why rare>]`. |
 
 - Only a PRODUCTION FAULT starts a fix cycle. A finding with no named input and wrong result is not a PRODUCTION FAULT.

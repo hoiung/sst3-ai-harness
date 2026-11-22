@@ -299,6 +299,7 @@ grep -rEn "^\s+\w+:" config/*.yaml
 ### Technical Completion
 - [ ] All file changes implemented per issue plan
 - [ ] All checkboxes in Issue marked complete with evidence
+- [ ] A change a person sees rendered: the PNG paths of every touched page at each declared viewport (the repo's `.design-fidelity.json` `viewports`; default desktop 1440 + phone 390; a fixed-size output at its true size) on the merged or live build, each Read, listed with what each showed (STANDARDS.md "Three-Tier Testing Framework" Run procedure step 3; `claude/hooks/sst3-page-review.sh`).
 - [ ] Agent-posted closing-summary comment present (sentinel `<!-- sst3-closing-summary -->`), verified by completeness-check C18
 - [ ] Commit-per-file discipline followed
 - [ ] Merged to main BEFORE user review (protects work)

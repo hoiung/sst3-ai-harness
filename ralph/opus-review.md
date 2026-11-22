@@ -75,6 +75,7 @@ Thorough architectural review.
 - [ ] All Expected Behavior items verified (preconditions for posting checklist)
 - [ ] All Acceptance Criteria items verified — **Stage 5 re-litigates any deferred items via the §3-Deferral Re-Litigation Angle per Leader.md Stage 5 step 1 (#477 AC 2.7)**. Items left in user-review-checklist §3 "Items Not Fixed" without one of three flags `[deferred-FP|N/A|tracking-issue]` will be re-classified by the Stage 5 angle; bidirectional cross-reference with user-review-checklist.md §3 3-flag taxonomy.
 - [ ] Engineering Requirements met; Cleanup Requirements completed
+- [ ] Rendered pages (dotfiles#583): an independent read. Before reading the implementer's notes, open with Read every picture the evidence names for each touched page at each declared viewport (the repo's `.design-fidelity.json` `viewports`; default desktop 1440 + phone 390; a fixed-size output at its true size) and judge it yourself for cut, overlapping or badly wrapped text, alignment, wrong sums, missing details and anything hard to use; then compare with the recorded findings. Kinds as Sonnet's rendered-pages line (rule: STANDARDS.md "Three-Tier Testing Framework" Run procedure step 3; gate: `claude/hooks/sst3-page-review.sh`).
 
 ### Final Verification
 - [ ] All commits pushed to remote; branch up to date with main (verified by reading `git log origin/main..HEAD` — do NOT run `git fetch` from this PLANNING-mode review); no merge conflicts (verified via `git merge-tree` or main-agent diff inspection); ready for posting user-review-checklist.md.

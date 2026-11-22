@@ -15,7 +15,8 @@ EVENTS (argv[1]; the hook JSON on stdin)
   bash   PreToolUse Bash: the repos the command runs in are watched for Bash-made edits;
          a push that updates the default branch from a repo with unread pictures is
          blocked (exit 2, message on stderr). Commits and other pushes are never blocked.
-  stop   Stop: pending pictures block the stop ({"decision":"block","reason":...}).
+  stop   Stop: pending pictures block the stop ({"decision":"block","reason":...}),
+         background tasks running or not.
 
 PAGE FILES  per work tree, from <root>/.design-fidelity.json (read by this file; shoot.py
       reads base_url, pages, viewports from the same file):
@@ -50,7 +51,7 @@ AUDIT  one JSON line per decision, appended to $SST3_PAGE_REVIEW_LOG:
       {"ts", "event", "session", "agent_id", "repo", "decision", "pending", "required",
        "counted", "detail"}
       decisions: recorded, counted, subagent-not-counted, block, warn, pass, gave-up,
-      deferred, opaque, corrupt-state, bad-map, bad-setting, scan-failed. An append that does not land
+      opaque, corrupt-state, bad-map, bad-setting, scan-failed. An append that does not land
       is announced on stderr ("SST3 page-review AUDIT WRITE FAILED"); the decision stands
       (same contract as sst3_audit_append in _lib-hook-output.sh). Over AUDIT_MAX_BYTES
       the log is moved to <log>.1 (replacing the older one) before the append.
@@ -1011,11 +1012,6 @@ def on_stop(payload: dict, session: str) -> int:
     st["scan_repos"] = [p["root"] for p in pend]
     msg = message("Stop hook (sst3-page-review) blocked:", pend, session, "page files changed")
     pending_files, req = flat(pend, "files"), required(pend)
-    if payload.get("background_tasks"):
-        save_state(st, "stop")
-        audit("stop", session, "deferred", pending=pending_files, required=req,
-              detail=f"{len(payload['background_tasks'])} background task(s) running")
-        return 0
     if MODE == "WARN":
         save_state(st, "stop")
         audit("stop", session, "warn", pending=pending_files, required=req)

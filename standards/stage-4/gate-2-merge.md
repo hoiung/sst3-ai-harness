@@ -8,7 +8,7 @@ Stage-4 merge gate: a worktree-isolated remote FF push that touches NO shared wo
 
 1. Ensure all work committed by exact pathspec (NEVER `git add -A`).
 2. Publish the solo branch: `git push origin <solo-branch>` (skip when its tip is already on origin). One ref per push command: several refs in one push run the push hooks once per ref on the same commit.
-3. Server-side fast-forward: `git push origin <solo-branch>:master`.
+3. Server-side fast-forward: `git push origin <solo-branch>:master`. The page-review gate (`claude/hooks/sst3-page-review.sh`) refuses this push (exit 2) while a page file it brings has no picture read since its change: take and Read the pictures it names (STANDARDS.md "Three-Tier Testing Framework" Run procedure step 3), then push again. A non-fast-forward rejection is step 4.
 4. On non-fast-forward rejection (transient pre-push race): `git fetch origin master` then `git rebase origin/master` INSIDE the worktree, retry step 3. Bounded ≤3 attempts. **NEVER** `--force` / `--force-with-lease`.
 5. `ExitWorktree action:keep` until push confirmed landed (`git ls-remote origin master` == solo tip); then `ExitWorktree action:remove`; then `git push origin --delete <solo-branch>`; then `git fetch --prune`.
 6. Mirror gates (#577 K8) `check-claude-template-propagation`, `sst3-mirror-presence`, `sst3-skills-mirror-drift` need merged canon in consumers: skip by id on the solo branch; after step 5 propagate from a clean origin/master worktree, re-run all three.
@@ -37,3 +37,4 @@ One write follows a dotfiles push, by operator ruling (#577 sign-off): the runti
 - `CLAUDE.md` "Branch Safety (CRITICAL — DO NOT VIOLATE)" — the prose-level invariant.
 - `claude/hooks/sst3-branch-guard.sh` — runtime backstop (dotfiles#490).
 - `claude/hooks/sst3-destructive-op-guard.sh` — DENY on `--force` / `--force-with-lease` / `filter-repo` / `reset --hard` / `branch -D` (#498 F-4); its head comment carries the merged-branch `branch -D` exception (#577 AC 1.4).
+- `claude/hooks/sst3-page-review.sh` — refuses step 3 while a page file it brings has unread pictures (dotfiles#583).

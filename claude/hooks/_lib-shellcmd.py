@@ -9,7 +9,8 @@ WHY   The destructive-op guard, the branch guard's canon lock, the stash guard a
       got past them; each was measured against real git in the Stage-5 fix review. Patching
       each spelling is the arms race; this reads the command the way the shell does once.
       The canonical-sync guard (R38) matched its build commands against the whole text and
-      judged the hook's own directory; it reads the commands here too.
+      judged the hook's own directory; it reads the commands here too. The page-review gate
+      (_lib-page-review.py, dotfiles#583) reads its pushes and Bash work dirs here as well.
 
 WHAT  Tokenises with quote removal, escapes, operators, redirections (fd prefixes, here-docs,
       here-strings) and nested commands ($( ), backticks, <( )); unwraps env/command/builtin/

@@ -20,11 +20,15 @@ set -u
 event="${1:-}"
 case "$event" in
   edit|read|bash|stop) ;;
-  *) echo "usage: sst3-page-review.sh <edit|read|bash|stop> < hook-json" >&2; exit 2 ;;
+  # exit 0, not 2: for Stop and PreToolUse exit 2 is a block, so a mistyped settings entry
+  # would hold every Stop or every Bash call.
+  *) echo "usage: sst3-page-review.sh <edit|read|bash|stop> < hook-json" >&2; exit 0 ;;
 esac
 
-mode="${SST3_PAGE_REVIEW_MODE:-BLOCK}"
-[[ "${mode^^}" == OFF ]] && exit 0
+# OFF in any case; a case glob, not ${mode^^}, so bash 3.2 (stock macOS) runs this entry.
+case "${SST3_PAGE_REVIEW_MODE:-BLOCK}" in
+  [Oo][Ff][Ff]) exit 0 ;;
+esac
 
 export SST3_PAGE_REVIEW_LOG="${SST3_PAGE_REVIEW_LOG:-$HOME/.claude/hooks/page-review.log}"
 export SST3_PAGE_REVIEW_STATE_DIR="${SST3_PAGE_REVIEW_STATE_DIR:-${TMPDIR:-/tmp}/sst3-page-review}"
@@ -36,20 +40,23 @@ if ! command -v python3 >/dev/null 2>&1; then
     msg=""
     # shellcheck source=_lib-hook-output.sh
     source "$here/_lib-hook-output.sh"
-    sst3_json_escape_to msg "sst3-page-review could not run: python3 is not on PATH, so page pictures are not being checked. Install python3 (<your-dotfiles-clone>/scripts/install.sh) or set SST3_PAGE_REVIEW_MODE=OFF."
+    sst3_json_escape_to msg "sst3-page-review could not run: python3 is not on PATH, so page pictures are not being checked. Install python3 (in dotfiles it comes from wsl/packages.txt through scripts/provision.sh) or set SST3_PAGE_REVIEW_MODE=OFF."
     printf '{"systemMessage":"%s"}\n' "$msg"
   fi
   exit 0
 fi
 
 # -I: no PYTHON* env, user site or script dir on sys.path; -S: no site import (the helper
-# needs only the standard library). The helper runs from its __pycache__ bytecode, which a
-# script named on the command line never gets: compiling it on every Stop cost ~13 ms (AC 1.9).
+# needs only the standard library). The helper runs from cached bytecode, which a script
+# named on the command line never gets: compiling it on every Stop cost ~13 ms (AC 1.9).
+# The bytecode goes under the user's cache (sys.pycache_prefix), never beside the hook in
+# ~/.claude/hooks, where a harness copy compares the folder file by file.
 exec python3 -I -S -c '
 import sys
 from importlib.machinery import SourceFileLoader
 path = sys.argv[1]
-sys.argv = sys.argv[1:]
+sys.pycache_prefix = sys.argv[2]
+sys.argv = [path] + sys.argv[3:]
 code = SourceFileLoader("sst3_page_review", path).get_code("sst3_page_review")
 exec(code, {"__name__": "__main__", "__file__": path, "__builtins__": __builtins__})
-' "$here/_lib-page-review.py" "$event"
+' "$here/_lib-page-review.py" "${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/sst3-page-review/pycache" "$event"

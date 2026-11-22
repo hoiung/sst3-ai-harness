@@ -117,7 +117,7 @@ These 9 mantras are the canonical authoring + audit criteria invoked verbatim fr
 ### Use Existing Before Building
 - Research existing libraries/packages FIRST
 - Evaluate: popularity, maintenance, license, security
-- Build custom only when existing solutions don't fit
+- Build custom only when existing solutions don't fit. A service the platform already uses (Stripe, Cloudflare, Google) that already does the job comes first, when that feature is free or within what we already pay for it: switch it on rather than build ours or spend our own email sends on it; a paid add-on needs the operator's yes first. Payment emails are Stripe's (receipts, refunds, failed or expiring card, a payment the bank asks to confirm), switched on in its Dashboard in test and live alike; ours keeps only what Stripe's cannot say, such as our own deadline. Operator, 2026-11-22: "dont reinvent the wheel" and "only if it's free or part of what we're already paying for" (hoiung/Issue #8)
 - Document why existing solutions rejected
 
 See: `../workflow/WORKFLOW.md` (Stage 1 — Research) for detailed library research process.

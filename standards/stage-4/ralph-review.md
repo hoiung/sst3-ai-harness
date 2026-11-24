@@ -43,6 +43,7 @@ Every finding is exactly one kind. The reviewer proposes the kind; the main agen
 - <!-- c4:T65 --> A finding against a test-policing guard (a test whose subject is another test, not production code) is a GAP.
 - A finding about code the agent added in-loop that no AC asks for is recorded, not fixed in-loop.
 - A reviewer that skipped a required check (wrapper lane, run sentinel, counter-query) is re-dispatched. That is not a finding about the diff.
+- A finding that a limit is missing on coverage (pages, items, areas or results read) or on flat-rate Claude subscription usage is rejected, with STANDARDS.md "Caps and limits" as the reason. A limit the diff keeps with no reason written beside it is a GAP.
 
 <!-- stages: 4 -->
 ## Fix cycle

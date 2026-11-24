@@ -1704,3 +1704,15 @@ Operator rule, 2026-11-15. The Three-Tier Testing Framework says what KINDS of t
 - **A repo gate that runs every test on every commit or push is a fault in that repo.** Fix it to select by changed path (a path nothing maps runs everything). When a commit or push is due before the gate can be fixed, tell the operator the wait and what it buys before starting it; never bypass a hook. Push one ref per command: several refs in one push run the push hooks once per ref.
 - **Say it before you wait.** Before a test run or a push expected to take over 5 minutes, state what will run, how long, and how much of it covers the change. If most of it does not, fix the selection first.
 - **Old tests are deleted, not parked.** A test of code that has been removed or retired, or that the operator names as no longer wanted, is deleted; git history keeps it. A test is never deleted only because the agent does not recognise it: ask.
+
+<!-- stages: always -->
+## Caps and limits
+
+Operator rule, 2026-11-24, for everything built. A limit on what a build reads, calls or spends needs a good reason, written beside it. A cap on coverage drops work before any rule has judged it: a missed result nobody chose.
+
+- **Allowed reasons.** Not being treated as spam, blocked or throttled: pacing, a polite request rate, retries with backoff, respecting a site's refusal (a 403, a robots rule), never beating a CAPTCHA. Also a provider's hard limit (an API's output or request-size ceiling: read in parts, or record and report what did not fit, never drop it quietly), safety, the law, or data size.
+- **Never a reason.** Saving usage on a flat-rate Claude subscription (Claude Code, `claude -p`): it is already paid for. Coverage: how many pages, items, areas, lots or results get read.
+- **A batch size is not a cap** when it splits the work and everything is still read in the same run. Its comment says so.
+- **Every limit kept has its reason in a comment beside it**, in the code or the config. A kept limit with no reason is a GAP (`stage-4/ralph-review.md` "The three kinds of finding").
+- **Paid spend past a free allowance** (metered API credit, a paid quota) is a question to the operator, with the count and the cost, never a silent cap. When metered credit runs out, the subscription does the same work now.
+- **An automated "missing cap" or "unbounded" finding** (a security review, a Ralph tier) on coverage or on subscription usage is not a fault: record it with this rule as the reason and add no cap. A finding against an allowed reason (no backoff, no request rate, a site's refusal ignored) still stands.

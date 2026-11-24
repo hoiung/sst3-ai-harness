@@ -744,6 +744,15 @@ consumer-private-I #2, and dotfiles.
 see also the defect-class breaker <!-- c4:T06 --> in `stage-4/ralph-review.md` (a defect class that survives its own remedy needs the
 remedy moved, not repeated).
 
+<!-- stages: always -->
+## Anti-Pattern #33: Capping Coverage or Subscription Usage
+
+**The pattern**: a build limits how much it reads (pages a run, lots a catalogue, results a search) or how many Claude calls it makes, to save cost or "to be safe", for no reason the operator gave. The work past the limit is dropped before any rule judges it. An automated review then flags the remaining loops as "no cap" and the build adds more.
+
+**Prevention**: STANDARDS.md "Caps and limits". A limit is set only against spam, blocking or throttling, or for a provider's hard limit, safety, the law or data size, with its reason in a comment beside it. Never to save flat-rate subscription usage, never on coverage. A batch size that still reads everything in the run is fine and says so. Paid spend past a free allowance is a question to the operator with the amount.
+
+**Enforcement**: `stage-4/ralph-review.md` "The three kinds of finding" (a missing-cap finding on coverage or subscription usage is rejected; a kept limit with no written reason is a GAP); `../ralph/_common-culprits.md`. Origin: operator, 2026-11-23 and 2026-11-24, after a build drafted per-run page caps no one asked for.
+
 ---
 
 <!-- stages: 4 -->

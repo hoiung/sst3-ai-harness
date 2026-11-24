@@ -22,3 +22,6 @@ Each tier checks these patterns. Bullets in the per-tier files differ by depth, 
 
 ## Rule
 Tier-specific bullet content lives in the tier files. The category numbers/names live HERE — change them once, propagate by re-reading.
+
+## Not a culprit: a missing cap
+No tier reports a missing limit on coverage (pages, items, areas or results read) or on flat-rate Claude subscription usage: STANDARDS.md "Caps and limits". A limit the diff keeps with no reason written beside it is Category 3 (Hardcoded Settings).
